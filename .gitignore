@@ -1,0 +1,68 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Source directory (tracked, but ignore cache)
+src/__pycache__/
+src/**/__pycache__/
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Archive directory (legacy code)
+archive/
+
+# Project-specific generated files
+projects/*/working/
+projects/*/logs/
+projects/*/output/
+
+# Restricted projects (sensitive content) - EXCLUDE these
+projects/restricted*/
+projects/*restricted*/
+
+# Keep config files and input images structure, but ignore actual images
+# Uncomment if you want to ignore input images too:
+# projects/*/input/*.png
+# projects/*/input/*.jpg
+# projects/*/input/*.jpeg
+
+# Temporary files
+*.tmp
+*.log
+*.bak
+*.cache
+
+# OS files
+Thumbs.db
+.DS_Store

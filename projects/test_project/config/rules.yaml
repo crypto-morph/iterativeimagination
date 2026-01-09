@@ -1,0 +1,118 @@
+project:
+  name: test_project
+  max_iterations: 20
+acceptance_criteria:
+- field: clothing_style_changed
+  question: Has the person's clothing style been changed to formal business attire
+    (suit, dress shirt, tie, etc.)?
+  type: boolean
+  min: 0
+  max: 1
+  intent: change
+  edit_strength: high
+  must_include:
+    - "formal business attire"
+    - "suit"
+    - "blazer"
+    - "dress shirt"
+    - "tie"
+  ban_terms:
+    - "bikini"
+    - "swimsuit"
+    - "swimwear"
+    - "beachwear"
+- field: person_facial_features
+  question: Are the person's facial features identical to the original image?
+  type: boolean
+  min: 0
+  max: 1
+  intent: preserve
+  edit_strength: high
+  must_include:
+    - "identical facial features"
+- field: person_pose
+  question: Is the person's pose identical to the original image?
+  type: boolean
+  min: 0
+  max: 1
+  intent: preserve
+  edit_strength: medium
+  must_include:
+    - "same pose"
+- field: background_identical
+  question: Is the background identical to the original image?
+  type: boolean
+  min: 0
+  max: 1
+  intent: preserve
+  edit_strength: medium
+  must_include:
+    - "identical background"
+- field: person_body_proportions
+  question: Are the person's body proportions identical to the original image?
+  type: boolean
+  min: 0
+  max: 1
+  intent: preserve
+  edit_strength: medium
+  must_include:
+    - "identical body proportions"
+questions:
+- field: person_clothing_description
+  question: Describe the person's clothing in detail. What type of garments are they
+    wearing? (e.g., casual, formal, business, sportswear)
+  type: string
+- field: clothing_formal_elements
+  question: List any formal business attire elements visible (suit jacket, dress shirt,
+    tie, formal dress, blazer, etc.)
+  type: string
+- field: clothing_style_confidence
+  question: Confidence in clothing style assessment
+  type: number
+  min: 0
+  max: 1
+- field: facial_features_comparison
+  question: Compare the facial features (eyes, nose, mouth, face shape) between the
+    generated and original image. Describe any differences.
+  type: string
+- field: facial_features_similarity
+  question: Rate the similarity of facial features (0.0 = completely different, 1.0
+    = identical)
+  type: number
+  min: 0
+  max: 1
+- field: pose_comparison
+  question: Compare the person's pose (body position, limb placement, orientation)
+    between the generated and original image. Describe any differences.
+  type: string
+- field: pose_similarity
+  question: Rate the similarity of the pose (0.0 = completely different, 1.0 = identical)
+  type: number
+  min: 0
+  max: 1
+- field: background_comparison
+  question: Compare the background elements between the generated and original image.
+    Describe any differences.
+  type: string
+- field: background_similarity
+  question: Rate the similarity of the background (0.0 = completely different, 1.0
+    = identical)
+  type: number
+  min: 0
+  max: 1
+- field: body_proportions_comparison
+  question: Compare the body proportions (height, width, limb lengths, head size relative
+    to body) between the generated and original image. Describe any differences.
+  type: string
+- field: body_proportions_similarity
+  question: Rate the similarity of body proportions (0.0 = completely different, 1.0
+    = identical)
+  type: number
+  min: 0
+  max: 1
+- field: overall_image_difference
+  question: Overall, how different is the generated image from the original? (0.0
+    = identical, 1.0 = completely different)
+  type: number
+  min: 0
+  max: 1

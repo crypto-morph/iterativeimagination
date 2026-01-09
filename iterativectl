@@ -1,0 +1,456 @@
+#!/usr/bin/env python3
+"""
+iterativectl - Management tool for Iterative Imagination projects
+
+Commands:
+  comfyui start|stop|restart|status  - Manage ComfyUI server
+  project create <name>              - Create a new project from defaults
+  rules check|suggest                - Lint and AI-suggest acceptance_criteria tags in rules.yaml
+"""
+
+import argparse
+import os
+import sys
+import shutil
+import subprocess
+import socket
+import time
+import signal
+import yaml
+from pathlib import Path
+
+
+# Get the script directory (ComfyScripts)
+SCRIPT_DIR = Path(__file__).parent.resolve()
+DEFAULTS_DIR = SCRIPT_DIR / "defaults"
+PROJECTS_DIR = SCRIPT_DIR / "projects"
+
+# Find ComfyUI directory - check environment variable first, then common locations
+def find_comfyui_dir():
+    """Find ComfyUI installation directory."""
+    # Check environment variable
+    env_path = os.environ.get("COMFYUI_DIR")
+    if env_path:
+        path = Path(env_path).expanduser().resolve()
+        if (path / "main.py").exists():
+            return path
+    
+    # Check if we're inside ComfyUI (legacy location)
+    parent = SCRIPT_DIR.parent
+    if (parent / "main.py").exists():
+        return parent
+    
+    # Check common locations
+    common_paths = [
+        Path.home() / "ComfyUI",
+        Path("/opt/ComfyUI"),
+        Path("/usr/local/ComfyUI"),
+    ]
+    
+    for path in common_paths:
+        if (path / "main.py").exists():
+            return path
+    
+    # Default fallback
+    return Path.home() / "ComfyUI"
+
+COMFYUI_DIR = find_comfyui_dir()
+
+
+def check_comfyui_running(host="localhost", port=8188):
+    """Check if ComfyUI is running by testing the port."""
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(1)
+        result = sock.connect_ex((host, port))
+        sock.close()
+        return result == 0
+    except Exception:
+        return False
+
+
+def get_comfyui_pid():
+    """Find ComfyUI process by checking for main.py."""
+    try:
+        result = subprocess.run(
+            ["pgrep", "-f", "python.*main.py"],
+            capture_output=True,
+            text=True
+        )
+        if result.returncode == 0:
+            pids = result.stdout.strip().split('\n')
+            # Filter to only processes in ComfyUI directory
+            for pid in pids:
+                if pid:
+                    try:
+                        # Check if process is actually ComfyUI
+                        proc_path = Path(f"/proc/{pid}/cwd")
+                        if proc_path.exists():
+                            cwd = proc_path.resolve()
+                            if str(COMFYUI_DIR) in str(cwd):
+                                return int(pid)
+                    except Exception:
+                        continue
+    except Exception:
+        pass
+    return None
+
+
+def comfyui_status():
+    """Check and display ComfyUI status."""
+    is_running = check_comfyui_running()
+    pid = get_comfyui_pid()
+    
+    if is_running and pid:
+        print(f"✓ ComfyUI is running (PID: {pid}, Port: 8188)")
+        return 0
+    elif pid:
+        print(f"⚠ ComfyUI process found (PID: {pid}) but port 8188 is not responding")
+        return 1
+    else:
+        print("✗ ComfyUI is not running")
+        return 1
+
+
+def comfyui_start():
+    """Start ComfyUI server."""
+    if check_comfyui_running():
+        print("✓ ComfyUI is already running")
+        return 0
+    
+    print("Starting ComfyUI...")
+    
+    # Check if we're in a virtual environment or need to activate one
+    venv_python = COMFYUI_DIR / "venv" / "bin" / "python"
+    if venv_python.exists():
+        python_cmd = str(venv_python)
+    else:
+        python_cmd = sys.executable
+    
+    # Start ComfyUI in background
+    try:
+        # Redirect output to log file
+        log_file = COMFYUI_DIR / "comfyui.log"
+        with open(log_file, 'w') as log:
+            process = subprocess.Popen(
+                [python_cmd, "main.py", "--listen", "127.0.0.1", "--port", "8188"],
+                cwd=str(COMFYUI_DIR),
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                start_new_session=True
+            )
+        
+        # Wait and check if it started (ComfyUI can take 10-30 seconds to fully start)
+        print("  Waiting for ComfyUI to initialize...")
+        max_wait = 30
+        waited = 0
+        while waited < max_wait:
+            time.sleep(2)
+            waited += 2
+            if check_comfyui_running():
+                print(f"✓ ComfyUI started successfully (PID: {process.pid})")
+                print(f"  Access at: http://localhost:8188")
+                print(f"  Logs: {log_file}")
+                return 0
+            # Show progress
+            if waited % 6 == 0:
+                print(f"  Still starting... ({waited}s)")
+        
+        # Final check
+        if check_comfyui_running():
+            print(f"✓ ComfyUI started successfully (PID: {process.pid})")
+            print(f"  Access at: http://localhost:8188")
+            print(f"  Logs: {log_file}")
+            return 0
+        else:
+            print("✗ ComfyUI failed to start or is taking too long")
+            print(f"  Check logs: {log_file}")
+            # Show last few lines of log
+            if log_file.exists():
+                with open(log_file, 'r') as f:
+                    lines = f.readlines()
+                    if lines:
+                        print("  Last log lines:")
+                        for line in lines[-5:]:
+                            print(f"    {line.rstrip()}")
+            print("  Or run manually: cd ~/ComfyUI && python main.py --listen 127.0.0.1 --port 8188")
+            # Don't kill the process - it might still be starting
+            return 1
+    except Exception as e:
+        print(f"✗ Error starting ComfyUI: {e}")
+        return 1
+
+
+def comfyui_stop():
+    """Stop ComfyUI server."""
+    pid = get_comfyui_pid()
+    
+    if not pid:
+        if check_comfyui_running():
+            print("⚠ ComfyUI port is open but process not found")
+            print("  You may need to stop it manually")
+            return 1
+        else:
+            print("✓ ComfyUI is not running")
+            return 0
+    
+    print(f"Stopping ComfyUI (PID: {pid})...")
+    
+    try:
+        os.kill(pid, signal.SIGTERM)
+        
+        # Wait for process to stop
+        for _ in range(10):
+            time.sleep(0.5)
+            if not check_comfyui_running():
+                print("✓ ComfyUI stopped successfully")
+                return 0
+        
+        # If still running, force kill
+        if check_comfyui_running():
+            print("⚠ Force killing ComfyUI...")
+            os.kill(pid, signal.SIGKILL)
+            time.sleep(1)
+            if not check_comfyui_running():
+                print("✓ ComfyUI stopped")
+                return 0
+        
+        print("✗ Failed to stop ComfyUI")
+        return 1
+    except ProcessLookupError:
+        print("✓ ComfyUI process not found (already stopped)")
+        return 0
+    except Exception as e:
+        print(f"✗ Error stopping ComfyUI: {e}")
+        return 1
+
+
+def comfyui_restart():
+    """Restart ComfyUI server."""
+    print("Restarting ComfyUI...")
+    comfyui_stop()
+    time.sleep(2)
+    return comfyui_start()
+
+
+def project_create(project_name):
+    """Create a new project by copying defaults."""
+    project_dir = PROJECTS_DIR / project_name
+    
+    if project_dir.exists():
+        print(f"✗ Project '{project_name}' already exists")
+        print(f"  Location: {project_dir}")
+        return 1
+    
+    if not DEFAULTS_DIR.exists():
+        print(f"✗ Defaults directory not found: {DEFAULTS_DIR}")
+        return 1
+    
+    print(f"Creating project '{project_name}'...")
+    
+    try:
+        # Copy defaults directory
+        shutil.copytree(DEFAULTS_DIR, project_dir)
+        print(f"  ✓ Copied defaults to {project_dir}")
+        
+        # Fix paths in AIGen.yaml to point to project-local workflow
+        aigen_path = project_dir / "config" / "AIGen.yaml"
+        if aigen_path.exists():
+            with open(aigen_path, 'r') as f:
+                aigen_data = yaml.safe_load(f)
+            
+            # Update workflow_file path to point to project-local workflow
+            # Path should be relative to project root (projects/{name}/)
+            # Application will resolve it from the project directory
+            # Change from "defaults/workflow/img2img_no_mask_api.json"
+            # To "workflow/img2img_no_mask_api.json" (relative to project root)
+            if 'workflow_file' in aigen_data:
+                # Extract just the filename from the defaults path
+                old_path = aigen_data['workflow_file']
+                workflow_filename = os.path.basename(old_path)
+                # Path relative to project root
+                aigen_data['workflow_file'] = f"workflow/{workflow_filename}"
+                
+                with open(aigen_path, 'w') as f:
+                    yaml.dump(aigen_data, f, default_flow_style=False, sort_keys=False)
+                print(f"  ✓ Updated workflow_file path in AIGen.yaml to project-local")
+            
+            # Update project name in rules.yaml if it has one
+            rules_path = project_dir / "config" / "rules.yaml"
+            if rules_path.exists():
+                with open(rules_path, 'r') as f:
+                    rules_data = yaml.safe_load(f)
+                
+                if 'project' in rules_data and 'name' in rules_data['project']:
+                    rules_data['project']['name'] = project_name
+                    
+                    with open(rules_path, 'w') as f:
+                        yaml.dump(rules_data, f, default_flow_style=False, sort_keys=False)
+                    print(f"  ✓ Updated project name in rules.yaml")
+        
+        # Create empty directories if they don't exist
+        for subdir in ['logs', 'output']:
+            subdir_path = project_dir / subdir
+            if not subdir_path.exists():
+                subdir_path.mkdir(parents=True, exist_ok=True)
+        
+        print(f"✓ Project '{project_name}' created successfully")
+        print(f"  Location: {project_dir}")
+        print(f"\nNext steps:")
+        print(f"  1. Edit: {project_dir}/config/rules.yaml")
+        print(f"  2. Place input image: {project_dir}/input/input.png")
+        print(f"  3. Run: iterativectl comfyui start")
+        
+        return 0
+        
+    except Exception as e:
+        print(f"✗ Error creating project: {e}")
+        if project_dir.exists():
+            print(f"  Cleaning up...")
+            shutil.rmtree(project_dir)
+        return 1
+
+
+def rules_run(args):
+    """Run rules_check.py with friendly iterativectl subcommands."""
+    rules_check_path = SCRIPT_DIR / "src" / "rules_checker.py"
+    if not rules_check_path.exists():
+        # Fall back to the legacy wrapper if present
+        legacy = SCRIPT_DIR / "rules_check.py"
+        if legacy.exists():
+            rules_check_path = legacy
+        else:
+            print(f"✗ rules checker not found: {rules_check_path}")
+            return 1
+
+    # Prefer the ComfyUI venv python if available, so dependencies (Pillow, requests, etc.) are present.
+    venv_python = COMFYUI_DIR / "venv" / "bin" / "python"
+    python_cmd = str(venv_python) if venv_python.exists() else sys.executable
+
+    cmd = [python_cmd, str(rules_check_path)]
+
+    if args.project:
+        cmd += ["--project", args.project]
+    if args.rules:
+        cmd += ["--rules", args.rules]
+
+    if args.action == "check":
+        # Lint only
+        pass
+    elif args.action == "suggest":
+        cmd += ["--suggest"]
+        if args.apply:
+            cmd += ["--apply"]
+        if args.overwrite_tags:
+            cmd += ["--overwrite-tags"]
+        if args.provider:
+            cmd += ["--provider", args.provider]
+        if args.model:
+            cmd += ["--model", args.model]
+        if getattr(args, "api_key", None):
+            cmd += ["--api-key", args.api_key]
+        if getattr(args, "no_colour", False):
+            cmd += ["--no-colour"]
+        if args.json:
+            cmd += ["--json"]
+    else:
+        print("✗ Unknown rules action")
+        return 1
+
+    try:
+        return subprocess.call(cmd, cwd=str(SCRIPT_DIR))
+    except Exception as e:
+        print(f"✗ Error running rules checker: {e}")
+        return 1
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Management tool for Iterative Imagination projects",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  iterativectl comfyui start          # Start ComfyUI server
+  iterativectl comfyui status         # Check ComfyUI status
+  iterativectl project create myproj  # Create new project 'myproj'
+  iterativectl rules check --project myproj
+  iterativectl rules suggest --project myproj --apply
+        """
+    )
+    
+    subparsers = parser.add_subparsers(dest='command', help='Command to run')
+    
+    # ComfyUI commands
+    comfyui_parser = subparsers.add_parser('comfyui', help='Manage ComfyUI server')
+    comfyui_subparsers = comfyui_parser.add_subparsers(dest='action', help='Action')
+    
+    comfyui_subparsers.add_parser('start', help='Start ComfyUI server')
+    comfyui_subparsers.add_parser('stop', help='Stop ComfyUI server')
+    comfyui_subparsers.add_parser('restart', help='Restart ComfyUI server')
+    comfyui_subparsers.add_parser('status', help='Check ComfyUI status')
+    
+    # Project commands
+    project_parser = subparsers.add_parser('project', help='Manage projects')
+    project_subparsers = project_parser.add_subparsers(dest='action', help='Action')
+    
+    create_parser = project_subparsers.add_parser('create', help='Create a new project')
+    create_parser.add_argument('name', help='Project name')
+
+    # Rules commands
+    rules_parser = subparsers.add_parser('rules', help='Lint and AI-suggest tags for rules.yaml')
+    rules_subparsers = rules_parser.add_subparsers(dest='action', help='Action')
+
+    rules_check_parser = rules_subparsers.add_parser('check', help='Lint rules.yaml (schema and tag shape)')
+    rules_check_parser.add_argument('--project', help='Project name (projects/<name>/config/rules.yaml)')
+    rules_check_parser.add_argument('--rules', help='Path to rules.yaml (overrides --project)')
+
+    rules_suggest_parser = rules_subparsers.add_parser('suggest', help='Use AIVis to suggest better acceptance_criteria tags')
+    rules_suggest_parser.add_argument('--project', help='Project name (projects/<name>/config/rules.yaml)')
+    rules_suggest_parser.add_argument('--rules', help='Path to rules.yaml (overrides --project)')
+    rules_suggest_parser.add_argument('--apply', action='store_true', help='Apply suggestions back into rules.yaml')
+    rules_suggest_parser.add_argument('--overwrite-tags', dest='overwrite_tags', action='store_true', help='Overwrite existing tags instead of filling/merging')
+    rules_suggest_parser.add_argument('--provider', help='Override AIVis provider (ollama/openrouter)')
+    rules_suggest_parser.add_argument('--model', help='Override AIVis model')
+    rules_suggest_parser.add_argument('--api-key', dest='api_key', help='OpenRouter API key override (otherwise uses OPENROUTER_API_KEY)')
+    rules_suggest_parser.add_argument('--no-colour', dest='no_colour', action='store_true', help='Disable ANSI colours in output')
+    rules_suggest_parser.add_argument('--json', action='store_true', help='Emit raw suggestions JSON')
+    
+    args = parser.parse_args()
+    
+    if not args.command:
+        parser.print_help()
+        return 1
+    
+    if args.command == 'comfyui':
+        if args.action == 'start':
+            return comfyui_start()
+        elif args.action == 'stop':
+            return comfyui_stop()
+        elif args.action == 'restart':
+            return comfyui_restart()
+        elif args.action == 'status':
+            return comfyui_status()
+        else:
+            comfyui_parser.print_help()
+            return 1
+    
+    elif args.command == 'project':
+        if args.action == 'create':
+            return project_create(args.name)
+        else:
+            project_parser.print_help()
+            return 1
+
+    elif args.command == 'rules':
+        if not args.action:
+            rules_parser.print_help()
+            return 1
+        return rules_run(args)
+    
+    else:
+        parser.print_help()
+        return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())

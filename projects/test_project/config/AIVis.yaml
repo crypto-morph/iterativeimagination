@@ -1,0 +1,22 @@
+# AIVis Configuration (Vision Model)
+# This file controls the AI Vision model used for image analysis
+# Separate from AIGen.yaml to keep concerns separated
+
+# Provider: "ollama" (local) or "openrouter" (cloud API)
+provider: "openrouter"  # or "ollama"
+
+# Model name
+# For Ollama: "qwen3-vl:4b" (3.3GB disk, ~8.7GB memory), "llava-phi3:latest" (2.9GB disk, ~5-6GB memory), "llava:7b" (4.7GB disk, ~8-9GB memory), "bakllava:7b" (4.7GB disk)
+# For OpenRouter: "qwen/qwen-2.5-vl-7b-instruct:free" (free tier)
+model: "qwen/qwen-2.5-vl-7b-instruct:free"  # Free Qwen vision model on OpenRouter
+
+# Fallback configuration (used when rate limited)
+# When using OpenRouter, automatically falls back to Ollama with this model
+fallback_provider: "ollama"  # Usually "ollama" when primary is "openrouter"
+fallback_model: "llava-phi3:latest"  # Smaller fallback model (2.9GB disk, ~5-6GB memory)
+
+# API key for OpenRouter (optional, can use OPENROUTER_API_KEY env var)
+# api_key: ""
+
+# Maximum concurrent requests (default: 1 for Ollama, 2+ for OpenRouter)
+# max_concurrent: 1

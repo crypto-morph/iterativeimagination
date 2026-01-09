@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Iterative Imagination - Project Viewer</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎨 Iterative Imagination Viewer</h1>
+            <p>Browse projects and view iteration progress</p>
+        </header>
+
+        <main>
+            {% if projects %}
+                {% for project in projects %}
+                <section class="project-card">
+                    <h2>{{ project.name }}</h2>
+                    <div class="runs-list">
+                        {% for run in project.runs %}
+                        <a href="/project/{{ project.name }}/run/{{ run.id }}" class="run-card">
+                            <div class="run-header">
+                                <span class="run-id">{{ run.id }}</span>
+                                <span class="run-stats">{{ run.iterations }} iterations</span>
+                            </div>
+                            <div class="run-range">
+                                Iterations {{ run.first_iteration }} → {{ run.last_iteration }}
+                            </div>
+                        </a>
+                        {% endfor %}
+                    </div>
+                </section>
+                {% endfor %}
+            {% else %}
+                <div class="empty-state">
+                    <p>No projects with runs found.</p>
+                    <p>Run <code>python iterative_imagination.py --project &lt;name&gt;</code> to create iterations.</p>
+                </div>
+            {% endif %}
+        </main>
+    </div>
+</body>
+</html>

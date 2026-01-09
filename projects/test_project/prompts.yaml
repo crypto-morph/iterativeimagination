@@ -1,0 +1,126 @@
+# LLM Prompts for Iterative Imagination
+# Edit these prompts to adjust how the AI analyzes and evaluates images
+# Use {placeholders} for dynamic content that will be filled in by the code
+
+ask_question: |
+  Answer this question about the image: {question}
+  
+  Question type: {type_info}{enum_info}{min_max_info}
+  
+  Provide your answer in JSON format matching the question type:
+  {{
+      "answer": <your_answer_here>
+  }}
+  
+  For boolean questions, use true/false.
+  For number/integer questions, provide a numeric value.
+  For string questions, provide a text description.
+  For array questions, provide a JSON array.
+
+ask_multiple_questions: |
+  Answer ALL of the following questions about the image. Answer each question carefully based on the image content.
+  
+  {questions_list}
+  
+  {original_image_context}
+  
+  Provide your answers in JSON format with one field per question:
+  {{
+      "<field1>": <answer1>,
+      "<field2>": <answer2>,
+      ...
+  }}
+  
+  For boolean questions, use true/false.
+  For number/integer questions, provide a numeric value within the specified range.
+  For string questions, provide a text description.
+  For array questions, provide a JSON array.
+  
+  Ensure all answers match their specified types and constraints.
+
+evaluate_acceptance_criteria: |
+  Evaluate this GENERATED image against acceptance criteria, comparing it to the ORIGINAL image.
+  
+  ORIGINAL IMAGE DESCRIPTION:
+  {original_description}
+  
+  QUESTION ANSWERS (for context):
+  {questions_summary}
+  
+  ACCEPTANCE CRITERIA:
+  {criteria_text}
+  
+  For each criterion, determine if it passes (true/false or within min/max range).
+  Then calculate overall score: (passed_criteria / total_criteria) * 100
+  
+  Provide your evaluation in JSON format:
+  {{
+      "overall_score": <0-100>,
+      "criteria_results": {{
+          "<field1>": <true/false or value>,
+          "<field2>": <true/false or value>,
+          ...
+      }}
+  }}
+
+compare_images: |
+  Compare these two images and analyze the differences.
+  
+  Focus on:
+  1. Similarity score (0.0 = completely different, 1.0 = identical)
+  2. What differences exist? (clothing, pose, features, background, proportions)
+  3. Overall analysis
+  
+  Provide your comparison in JSON format:
+  {{
+      "similarity_score": <0.0-1.0>,
+      "differences": ["difference1", "difference2", ...],
+      "analysis": "detailed analysis text"
+  }}
+
+describe_image: |
+  Describe this image in detail. Focus on:
+  1. Main subject (person, object, scene)
+  2. If person: appearance, pose, clothing
+  3. Background/setting
+  4. Overall composition and notable details
+  
+  Provide a detailed description.
+
+improve_prompts: |
+  You are helping improve image generation prompts for Stable Diffusion.
+  
+  Current positive prompt: {current_positive}
+  Current negative prompt: {current_negative}
+  
+  Evaluation results:
+  - Overall score: {overall_score}%
+  - Failed criteria: {failed_criteria}
+  
+  Image comparison:
+  - Similarity: {similarity_score}
+  - Differences: {differences}
+  - Analysis: {analysis}
+  
+  Rules to achieve:
+  {rules_text}
+  
+  Important constraints:
+  1. The rules are authoritative. Optimise the prompts to satisfy the failed criteria first.
+  2. If the goal involves changing clothing style (for example to formal business attire), then:
+     - The positive prompt must describe the target clothing only (for example suit, blazer, dress shirt, tie).
+     - The negative prompt must explicitly ban the original clothing (for example bikini, swimsuit, swimwear).
+     - Do not include contradictory clothing instructions in the positive prompt.
+  3. Preserve identity, pose, background, and body proportions when asked, by describing them explicitly in the positive prompt.
+
+  Suggest improved positive and negative prompts that:
+  1. Address the failed criteria
+  2. Maintain what's working well
+  3. Better achieve the rules
+  4. Follow Stable Diffusion prompt best practices
+  
+  Provide your suggestions in JSON format:
+  {{
+      "positive": "<improved positive prompt>",
+      "negative": "<improved negative prompt>"
+  }}

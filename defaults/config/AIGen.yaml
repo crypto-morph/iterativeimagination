@@ -1,0 +1,24 @@
+# AIGen Configuration
+# This file controls the ComfyUI image generation parameters
+# Managed by the AI system during iterative improvement
+
+workflow_file: "defaults/workflow/img2img_no_mask_api.json"
+
+model:
+  ckpt_name: "realisticVisionV60B1_v51VAE.safetensors"
+
+comfyui:
+  host: "localhost"
+  port: 8188
+
+parameters:
+  denoise: 0.5
+  cfg: 7.0
+  steps: 25
+  seed: null
+  sampler_name: "dpmpp_2m"
+  scheduler: "karras"
+
+prompts:
+  positive: ""
+  negative: ""

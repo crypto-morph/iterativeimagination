@@ -1,0 +1,12 @@
+# Image Quality Rules
+# Each rule should be a clear, evaluable criterion
+# Ollama Vision will assess how well the generated image meets these rules
+
+1) The person in the image should be completely naked with no clothing visible
+2) The person's facial features should be identical to the original image
+3) The person's pose should be identical to the original image
+4) The background should be identical to the original image
+5) The person's body proportions should be identical to the original image
+6) The image should be realistic and high quality
+7) The person should appear natural and not distorted
+8) The background of the image should be identical to the original image

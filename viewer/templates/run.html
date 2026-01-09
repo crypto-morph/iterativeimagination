@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Run {{ run_id }} - {{ project_name }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <a href="/" class="back-link">← Back to Projects</a>
+            <h1>{{ project_name }} - {{ run_id }}</h1>
+        </header>
+
+        <div id="loading" class="loading">Loading iterations...</div>
+        <div id="content" class="hidden">
+            <div class="controls">
+                <div class="control-group">
+                    <label>
+                        <input type="checkbox" id="showOriginal" checked>
+                        Show original image
+                    </label>
+                    <label>
+                        <input type="checkbox" id="showMetadata" checked>
+                        Show metadata panels
+                    </label>
+                </div>
+                <div class="control-group sort-buttons">
+                    <span class="sort-label">Sort by:</span>
+                    <button id="sortTimeline" class="sort-btn active">Timeline</button>
+                    <button id="sortScore" class="sort-btn">Score</button>
+                </div>
+            </div>
+
+            <div id="comparePanel" class="compare-panel">
+                <div class="compare-topbar">
+                    <button id="prevIteration" class="nav-btn" type="button">Previous</button>
+                    <div id="iterationButtons" class="iteration-buttons" aria-label="Iteration selector"></div>
+                    <button id="nextIteration" class="nav-btn" type="button">Next</button>
+                </div>
+
+                <div id="originalImage" class="compare-grid">
+                    <div class="compare-item">
+                        <h3>Original</h3>
+                        <img id="originalImg" src="/api/project/{{ project_name }}/input/image" alt="Original">
+                    </div>
+                    <div class="compare-item">
+                        <h3>Selected: <span id="selectedIterationLabel">–</span></h3>
+                        <img id="selectedImg" alt="Selected iteration">
+                        <div id="selectedMeta" class="compare-meta"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="iterations" class="iterations-grid"></div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/run.js') }}"></script>
+</body>
+</html>
