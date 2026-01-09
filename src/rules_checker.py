@@ -106,7 +106,34 @@ def lint_rules(rules: Dict[str, Any]) -> Tuple[List[str], List[str]]:
     return errors, warnings
 
 
-def load_guidelines_text(repo_root: Path) -> str:
+def load_guidelines_text(
+    repo_root: Path,
+    project_name: Optional[str],
+    guidelines_path: Optional[str],
+    no_guidelines: bool,
+) -> str:
+    """Load guidelines text that will be sent to AIVis.
+
+    Precedence:
+    - --no-guidelines: disables all guidelines (empty string)
+    - --guidelines <path>: explicit file
+    - projects/<project>/config/rules_guidelines.md: per-project override
+    - docs/rules_guidelines.md: repo default
+    """
+    if no_guidelines:
+        return ""
+
+    if guidelines_path:
+        p = Path(guidelines_path)
+        if p.exists():
+            return p.read_text(encoding="utf-8")
+        print(f"⚠ Guidelines file not found: {p}", file=sys.stderr)
+
+    if project_name:
+        p = repo_root / "projects" / project_name / "config" / "rules_guidelines.md"
+        if p.exists():
+            return p.read_text(encoding="utf-8")
+
     p = repo_root / "docs" / "rules_guidelines.md"
     if p.exists():
         return p.read_text(encoding="utf-8")
@@ -242,6 +269,7 @@ def print_suggestions_diff(
     suggestions: Dict[str, Any],
     metadata: Optional[Dict[str, Any]],
     colour: bool,
+    show_general_notes: bool,
 ) -> None:
     criteria = rules.get("acceptance_criteria") or []
     by_field = {c.get("field"): c for c in criteria if isinstance(c, dict) and c.get("field")}
@@ -302,8 +330,9 @@ def print_suggestions_diff(
         else:
             print(f"- {field}: {_colour('no changes suggested', ANSI_YELLOW, colour)}")
 
-    for n in suggestions.get("general_notes", []) or []:
-        print(f"NOTE: {n}")
+    if show_general_notes:
+        for n in suggestions.get("general_notes", []) or []:
+            print(f"NOTE: {n}")
 
     if not any_changes:
         print("No tag changes suggested.")
@@ -321,6 +350,9 @@ def main() -> int:
     parser.add_argument("--api-key", dest="api_key", help="OpenRouter API key override (otherwise uses OPENROUTER_API_KEY)")
     parser.add_argument("--json", dest="json_out", action="store_true", help="Emit AI suggestions JSON to stdout")
     parser.add_argument("--no-colour", action="store_true", help="Disable ANSI colours in suggestion output")
+    parser.add_argument("--no-general-notes", action="store_true", help="Do not print AI general_notes (useful for restricted projects)")
+    parser.add_argument("--guidelines", help="Path to a guidelines markdown file to send to AIVis")
+    parser.add_argument("--no-guidelines", action="store_true", help="Send no guidelines to AIVis (project will rely on prompt alone)")
     args = parser.parse_args()
 
     repo_root = REPO_ROOT
@@ -350,7 +382,16 @@ def main() -> int:
     metadata: Optional[Dict[str, Any]] = None
 
     if args.suggest:
-        guidelines = load_guidelines_text(repo_root)
+        # For restricted projects, default to suppressing general notes (they often include generic content-policy reminders)
+        restricted_default = bool(project_name and project_name.lower().startswith("restricted"))
+        show_general_notes = not (args.no_general_notes or restricted_default)
+
+        guidelines = load_guidelines_text(
+            repo_root=repo_root,
+            project_name=project_name,
+            guidelines_path=args.guidelines,
+            no_guidelines=args.no_guidelines,
+        )
         aivis, _prompts_path = build_aivis_client(project_name, args.provider, args.model, args.api_key)
         rules_yaml_text = rules_path.read_text(encoding="utf-8")
         suggestions, metadata = aivis.suggest_rules_tags(rules_yaml_text, guidelines)
@@ -358,7 +399,7 @@ def main() -> int:
             print(json.dumps({"suggestions": suggestions, "metadata": metadata}, indent=2))
         else:
             colour = (sys.stdout.isatty() and not args.no_colour)
-            print_suggestions_diff(rules, suggestions, metadata, colour=colour)
+            print_suggestions_diff(rules, suggestions, metadata, colour=colour, show_general_notes=show_general_notes)
 
     if args.apply:
         if not suggestions:

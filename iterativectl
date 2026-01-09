@@ -351,6 +351,12 @@ def rules_run(args):
             cmd += ["--api-key", args.api_key]
         if getattr(args, "no_colour", False):
             cmd += ["--no-colour"]
+        if getattr(args, "no_general_notes", False):
+            cmd += ["--no-general-notes"]
+        if getattr(args, "guidelines", None):
+            cmd += ["--guidelines", args.guidelines]
+        if getattr(args, "no_guidelines", False):
+            cmd += ["--no-guidelines"]
         if args.json:
             cmd += ["--json"]
     else:
@@ -413,6 +419,9 @@ Examples:
     rules_suggest_parser.add_argument('--model', help='Override AIVis model')
     rules_suggest_parser.add_argument('--api-key', dest='api_key', help='OpenRouter API key override (otherwise uses OPENROUTER_API_KEY)')
     rules_suggest_parser.add_argument('--no-colour', dest='no_colour', action='store_true', help='Disable ANSI colours in output')
+    rules_suggest_parser.add_argument('--no-general-notes', dest='no_general_notes', action='store_true', help='Do not print AI general_notes (useful for restricted projects)')
+    rules_suggest_parser.add_argument('--guidelines', help='Path to guidelines markdown file to send to AIVis')
+    rules_suggest_parser.add_argument('--no-guidelines', dest='no_guidelines', action='store_true', help='Send no guidelines to AIVis')
     rules_suggest_parser.add_argument('--json', action='store_true', help='Emit raw suggestions JSON')
     
     args = parser.parse_args()
