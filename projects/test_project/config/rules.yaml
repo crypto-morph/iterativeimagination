@@ -107,6 +107,8 @@ masking:
 project:
   max_iterations: 10
   name: test_project
+  denoise_max: 0.95
+  cfg_max: 15.0
 prompts:
   global:
     negative: ''
