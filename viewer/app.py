@@ -351,6 +351,7 @@ def suggest_mask(project_name: str):
     mask_name = payload.get("mask_name") or payload.get("name") or "default"
     query = payload.get("query") or payload.get("text") or payload.get("prompt") or ""
     threshold = payload.get("threshold", 0.30)
+    focus = payload.get("focus")  # auto|left|middle|right|none
 
     if not isinstance(query, str) or not query.strip():
         return jsonify({"error": "Missing query text"}), 400
@@ -376,6 +377,7 @@ def suggest_mask(project_name: str):
             "mask_name": mname,
             "query": query.strip(),
             "threshold": threshold_f,
+            "focus": str(focus) if focus is not None else "auto",
             "status": "queued",
             "message": "queued",
             "created_at": time.time(),
@@ -482,6 +484,15 @@ def suggest_mask(project_name: str):
                 return
             raw = client.download_image(filename, subfolder=subfolder, folder_type=ftype)
 
+            # Reduce accidental multi-person selection by keeping only a region if requested.
+            focus_eff = str(focus).strip().lower() if isinstance(focus, str) else "auto"
+            if focus_eff in ("auto", "", "none"):
+                # Infer from mask name for common cases.
+                mn = str(mname).lower()
+                if mn in ("left", "middle", "right"):
+                    focus_eff = mn
+            raw = _apply_focus_to_mask_png(raw, focus_eff)
+
             # Save result into project
             input_dir = project_dir / "input"
             if mname == "default":
@@ -569,6 +580,49 @@ def _safe_mask_name(mask_name: str) -> str:
     if not re.match(r"^[a-zA-Z0-9_-]+$", name):
         raise ValueError("Invalid mask name")
     return name
+
+
+def _apply_focus_to_mask_png(raw_png: bytes, focus: str | None) -> bytes:
+    """Post-process a mask PNG to keep only pixels within a horizontal focus region.
+
+    focus:
+      - left: keep x in [0, 0.45w]
+      - middle: keep x in [0.28w, 0.72w]
+      - right: keep x in [0.55w, w]
+      - none/auto/unknown: no change
+    """
+    if not raw_png:
+        return raw_png
+    f = (focus or "").strip().lower()
+    if f in ("", "auto", "none"):
+        return raw_png
+    try:
+        from PIL import Image  # type: ignore
+        import io
+
+        img = Image.open(io.BytesIO(raw_png))
+        g = img.convert("L")
+        w, h = g.size
+        if f == "left":
+            x0, x1 = 0, int(w * 0.45)
+        elif f == "middle":
+            x0, x1 = int(w * 0.28), int(w * 0.72)
+        elif f == "right":
+            x0, x1 = int(w * 0.55), w
+        else:
+            return raw_png
+
+        # Threshold to binary mask
+        bw = g.point(lambda p: 255 if p >= 128 else 0, mode="L")
+        out = Image.new("L", (w, h), 0)
+        region = bw.crop((x0, 0, x1, h))
+        out.paste(region, (x0, 0))
+
+        buf = io.BytesIO()
+        out.save(buf, format="PNG")
+        return buf.getvalue()
+    except Exception:
+        return raw_png
 
 
 def _list_project_masks(project_dir: Path) -> list[dict]:

@@ -220,13 +220,15 @@ async function suggestMask() {
     setStatus("Type what to mask first (e.g. 'left woman').");
     return;
   }
+  const focusEl = $("suggestFocus");
+  const focus = focusEl ? String(focusEl.value || "auto") : "auto";
   setStatus(`Suggesting mask '${maskName}' for: ${text} (queueing...)`);
   $("btnSuggestMask").disabled = true;
   try {
     const res = await fetch(`/api/project/${project}/input/mask_suggest`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mask_name: maskName, query: text, threshold: 0.30 })
+      body: JSON.stringify({ mask_name: maskName, query: text, threshold: 0.30, focus })
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
