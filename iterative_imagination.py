@@ -1265,6 +1265,14 @@ class IterativeImagination:
             if score >= 100:
                 self.logger.info(f"{'='*60}\nPerfect score achieved! (Score: {score}%)\n{'='*60}")
                 shutil.copy2(self.project.get_iteration_paths(iteration)['image'], output_paths['image'])
+                # Also update input/progress.png so multi-pass edits can chain without overwriting input/input.png.
+                try:
+                    progress_path = self.project.project_root / "input" / "progress.png"
+                    progress_path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(output_paths['image'], progress_path)
+                    self.logger.info(f"Updated progress image: {progress_path}")
+                except Exception:
+                    pass
                 with open(output_paths['metadata'], 'w', encoding='utf-8') as f:
                     json.dump({"final_iteration": iteration, "final_score": score, "metadata": iteration_result}, f, indent=2)
                 break
@@ -1290,6 +1298,14 @@ class IterativeImagination:
             self.logger.info(f"Best result: Iteration {self.best_iteration} (Score: {self.best_score}%)")
             best_paths = self.project.get_iteration_paths(self.best_iteration, run_id=self.run_id)
             shutil.copy2(best_paths['image'], output_paths['image'])
+            # Also update input/progress.png so multi-pass edits can chain without overwriting input/input.png.
+            try:
+                progress_path = self.project.project_root / "input" / "progress.png"
+                progress_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(output_paths['image'], progress_path)
+                self.logger.info(f"Updated progress image: {progress_path}")
+            except Exception:
+                pass
             with open(best_paths['metadata'], 'r', encoding='utf-8') as f:
                 best_metadata = json.load(f)
             with open(output_paths['metadata'], 'w', encoding='utf-8') as f:

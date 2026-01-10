@@ -31,7 +31,16 @@ class ProjectManager:
             return yaml.safe_load(f)
     
     def get_input_image_path(self) -> Path:
-        """Get path to input image."""
+        """Get path to the current input image.
+
+        Preferred:
+        - `input/progress.png` if present (allows multi-pass workflows without overwriting the original input)
+        Fallback:
+        - `input/input.png`
+        """
+        progress_path = self.project_root / "input" / "progress.png"
+        if progress_path.exists():
+            return progress_path
         input_path = self.project_root / "input" / "input.png"
         if not input_path.exists():
             raise FileNotFoundError(f"Input image not found: {input_path}")
