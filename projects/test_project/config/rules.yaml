@@ -116,8 +116,8 @@ prompts:
       negative: ''
       positive: ''
     left:
-      negative: snowsuit, business suit, shirt, different facial features, different
-        pose, different body proportions
+      negative: business suit, shirt, different facial features, different pose,
+        different body proportions
       positive: three women in a professional setting, modern office, identical facial
         features, same pose, identical body proportions, snowsuit, identical background
     middle:

@@ -1409,6 +1409,49 @@ def generate_rules_base_prompts(project_name: str):
     if not positive and not negative:
         return jsonify({"error": "AIVis returned empty prompts"}), 500
 
+    # Filter contradictory terms: must_include should not be in negative, ban_terms should not be in positive
+    def _filter_csv_by_terms(text: str, forbidden_terms: list) -> str:
+        """Remove terms (and variants) from comma-separated text."""
+        if not text or not forbidden_terms:
+            return text
+        parts = [p.strip() for p in text.split(",") if p.strip()]
+        out = []
+        for p in parts:
+            pl = p.lower()
+            # Check if any forbidden term (or variant) appears in this part
+            should_skip = False
+            for t in forbidden_terms:
+                if not t:
+                    continue
+                tl = str(t).strip().lower()
+                if tl in pl or pl in tl:  # Substring match to catch plurals/variants
+                    should_skip = True
+                    break
+            if not should_skip:
+                out.append(p)
+        return ", ".join(out).strip(" ,\n")
+
+    # Extract must_include and ban_terms from active criteria
+    must_include_terms = []
+    ban_terms = []
+    avoid_terms = []
+    for crit in active_criteria:
+        if not isinstance(crit, dict):
+            continue
+        must_include_terms.extend(crit.get("must_include") or [])
+        ban_terms.extend(crit.get("ban_terms") or [])
+        avoid_terms.extend(crit.get("avoid_terms") or [])
+
+    # Normalize terms (strip, lowercase for comparison)
+    must_include_terms = [str(t).strip().lower() for t in must_include_terms if t]
+    ban_terms = [str(t).strip().lower() for t in ban_terms if t]
+    avoid_terms = [str(t).strip().lower() for t in avoid_terms if t]
+
+    # Apply filters
+    negative = _filter_csv_by_terms(negative, must_include_terms)
+    positive = _filter_csv_by_terms(positive, ban_terms)
+    positive = _filter_csv_by_terms(positive, avoid_terms)
+
     prompts = rules_obj.get("prompts") or {}
     if scope == "global":
         prompts["global"] = {"positive": positive, "negative": negative}
