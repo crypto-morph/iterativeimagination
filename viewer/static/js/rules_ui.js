@@ -273,6 +273,25 @@ function findCriterion(field) {
   return getCriteria().find(c => String(c.field || "") === String(field));
 }
 
+function removeCriterionEverywhere(field) {
+  const f = String(field || "");
+  // Remove from acceptance_criteria list
+  const crits = getCriteria().filter(c => String(c.field || "") !== f);
+  setCriteria(crits);
+  // Remove from all mask memberships
+  const masks = membership();
+  for (const m of masks) {
+    if (!m || typeof m !== "object") continue;
+    const arr = Array.isArray(m.active_criteria) ? m.active_criteria : [];
+    m.active_criteria = arr.filter(x => String(x) !== f);
+  }
+  state.rules.masking = state.rules.masking || {};
+  state.rules.masking.masks = masks;
+  if (state.selectedField === f) state.selectedField = null;
+  markDirty();
+  renderAll();
+}
+
 function splitLines(s) {
   return String(s || "")
     .split("\n")
@@ -311,6 +330,34 @@ function renderEditor() {
   $("critMust").value = joinLines(c.must_include || []);
   $("critBan").value = joinLines(c.ban_terms || []);
   $("critAvoid").value = joinLines(c.avoid_terms || []);
+
+  // Header actions
+  const btnDel = $("btnDeleteCriterion");
+  if (btnDel) {
+    btnDel.onclick = () => {
+      const f = String(c.field || "");
+      if (!f) return;
+      if (!window.confirm(`Delete criterion '${f}'?\n\nThis removes it from rules.yaml and all mask memberships.`)) return;
+      removeCriterionEverywhere(f);
+    };
+  }
+
+  const btnDeact = $("btnDeactivateCurrent");
+  if (btnDeact) {
+    const can = state.scope !== "all";
+    btnDeact.disabled = !can;
+    btnDeact.onclick = () => {
+      if (state.scope === "all") return;
+      const f = String(c.field || "");
+      const s = getActiveSet(state.scope);
+      if (s.has(f)) {
+        s.delete(f);
+        setActiveSet(state.scope, s);
+        markDirty();
+        renderAll();
+      }
+    };
+  }
 
   // mask membership checkboxes
   const scopesEl = $("critScopes");
