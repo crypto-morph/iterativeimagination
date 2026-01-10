@@ -8,14 +8,28 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <style>
+        /* Override old gradient background for Rules UI */
+        body {
+            background: #f5f5f5 !important;
+            padding: 1.5rem;
+        }
+        
         .rulesui-container {
             max-width: 1600px;
             margin: 0 auto;
+            background: white;
+            padding: 1.5rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
+        
         .rulesui-tabs {
             border-bottom: 2px solid #e5e7eb;
             margin-bottom: 1.5rem;
+            background: white;
+            padding: 0 1rem;
         }
+        
         .rulesui-tab {
             padding: 0.75rem 1.5rem;
             cursor: pointer;
@@ -23,26 +37,33 @@
             color: #6b7280;
             font-weight: 500;
             transition: all 0.2s;
+            display: inline-block;
         }
+        
         .rulesui-tab:hover {
             color: #374151;
             border-bottom-color: #d1d5db;
         }
+        
         .rulesui-tab.is-active {
             color: #2563eb;
             border-bottom-color: #2563eb;
         }
+        
         .rulesui-tab-content {
             display: none;
         }
+        
         .rulesui-tab-content.is-active {
             display: block;
         }
+        
         .scope-preview-img {
             max-width: 100%;
             border-radius: 8px;
             border: 1px solid #e5e7eb;
         }
+        
         .crit-card {
             background: white;
             border: 1px solid #e5e7eb;
@@ -52,14 +73,17 @@
             cursor: move;
             transition: all 0.2s;
         }
+        
         .crit-card:hover {
             border-color: #2563eb;
             box-shadow: 0 2px 4px rgba(37, 99, 235, 0.1);
         }
+        
         .crit-card.inactive {
             opacity: 0.5;
             background: #f9fafb;
         }
+        
         .board-col {
             min-height: 300px;
             background: #f9fafb;
@@ -67,14 +91,25 @@
             border-radius: 8px;
             padding: 1rem;
         }
+        
         .board-col.drop-hover {
             border-color: #2563eb;
             background: #eff6ff;
         }
+        
         .code-textarea {
             font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
             font-size: 0.875rem;
             line-height: 1.5;
+        }
+        
+        /* Fix code highlighting - don't make file paths red */
+        code {
+            background: #f5f5f5;
+            color: #363636;
+            padding: 0.125rem 0.25rem;
+            border-radius: 3px;
+            font-size: 0.875em;
         }
     </style>
 </head>
