@@ -1542,6 +1542,7 @@ class IterativeImagination:
                     # If still not found, add the full term
                     if not found_variant:
                         change_terms_to_add.append(t_str)
+                        self.logger.info(f"  Adding missing must_include term to positive prompt: {t_str}")
             
             preserve_terms_to_add = []
             for t in preserve_must_include:
@@ -1579,6 +1580,18 @@ class IterativeImagination:
                     final_parts.append(part)
             
             improved_positive = ", ".join(final_parts).strip(" ,\n")
+            
+            # Final safety check: ensure all change-intent must_include terms are in the positive prompt
+            # This is a last resort in case they were removed by pruning or deduplication
+            for t in change_must_include:
+                t_str = str(t).strip()
+                if t_str:
+                    t_lower = t_str.lower()
+                    # Check if any part of the prompt contains this term (substring match)
+                    if t_lower not in improved_positive.lower():
+                        # Force add it at the front for maximum weight
+                        improved_positive = f"{t_str}, {improved_positive}".strip(" ,\n")
+                        self.logger.warning(f"  Force-added missing must_include term to front of positive prompt: {t_str}")
 
             # Ensure banned terms appear in negative
             if ban_terms:
