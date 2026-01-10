@@ -1452,6 +1452,42 @@ def generate_rules_base_prompts(project_name: str):
     positive = _filter_csv_by_terms(positive, ban_terms)
     positive = _filter_csv_by_terms(positive, avoid_terms)
 
+    # Reorder positive prompt: put must_include terms from "change" intent criteria at the front
+    # (Stable Diffusion gives more weight to terms earlier in the prompt)
+    change_must_include = []
+    preserve_must_include = []
+    for crit in active_criteria:
+        if not isinstance(crit, dict):
+            continue
+        intent = str(crit.get("intent") or "preserve").strip().lower()
+        terms = crit.get("must_include") or []
+        if intent == "change":
+            change_must_include.extend(terms)
+        else:
+            preserve_must_include.extend(terms)
+    
+    if change_must_include:
+        # Extract change terms from positive prompt and move to front
+        pos_parts = [p.strip() for p in positive.split(",") if p.strip()]
+        change_terms_found = []
+        remaining_parts = []
+        
+        for part in pos_parts:
+            part_lower = part.lower()
+            is_change_term = False
+            for ct in change_must_include:
+                ct_lower = str(ct).strip().lower()
+                if ct_lower in part_lower or part_lower in ct_lower:
+                    change_terms_found.append(part)
+                    is_change_term = True
+                    break
+            if not is_change_term:
+                remaining_parts.append(part)
+        
+        # Reconstruct: change terms first, then rest
+        if change_terms_found:
+            positive = ", ".join(change_terms_found + remaining_parts)
+
     prompts = rules_obj.get("prompts") or {}
     if scope == "global":
         prompts["global"] = {"positive": positive, "negative": negative}

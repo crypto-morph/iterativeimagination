@@ -145,6 +145,8 @@ generate_base_prompts: |
   - Avoid putting must_include terms into the negative prompt.
   - Avoid putting ban_terms into the positive prompt.
   - If criteria ask to preserve identity/pose/background/body proportions, explicitly include those preserve tags in the positive prompt.
+  - IMPORTANT: Prompt order matters in Stable Diffusion. Put the PRIMARY CHANGE (must_include terms from "change" intent criteria) at the FRONT of the positive prompt for maximum weight.
+  - Then add scene/setting context, then preservation terms (identical features, same pose, etc.).
   - Output short comma-separated tags/phrases only. No full sentences. No "no X"/"not X" phrases.
   
   Output JSON ONLY:
