@@ -503,6 +503,17 @@ class IterativeImagination:
             # Resolve masks list (optional)
             resolved_mask_path: Optional[Path] = None
             masks = mask_cfg.get("masks")
+            
+            # Auto-detect masks from input/masks/ directory if masks list isn't defined
+            # but active_mask is set (convenience feature)
+            if not masks and active_mask_name:
+                masks_dir = self.project.project_root / "input" / "masks"
+                if masks_dir.exists() and masks_dir.is_dir():
+                    candidate_mask = masks_dir / f"{active_mask_name}.png"
+                    if candidate_mask.exists():
+                        resolved_mask_path = candidate_mask
+                        self.logger.info(f"Auto-detected mask: {candidate_mask}")
+            
             if masks:
                 # List form: [{name, file}, ...]
                 if isinstance(masks, list):
