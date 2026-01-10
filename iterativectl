@@ -440,17 +440,9 @@ def run_variants(args):
     working_aigen_path = working_dir / "AIGen.yaml"
     checkpoint_path = working_dir / "checkpoint.json"
 
-    # Convenience: if input/input.png is missing but input/example.png exists, copy it over.
-    # This prevents the first run from failing due to a missing canonical input filename.
+    # Require canonical input path. We no longer use input/example.png.
     input_dir = proj_dir / "input"
     input_png = input_dir / "input.png"
-    example_png = input_dir / "example.png"
-    if (not input_png.exists()) and example_png.exists():
-        try:
-            shutil.copy2(example_png, input_png)
-            print(f"✓ Copied {example_png} -> {input_png}")
-        except Exception as e:
-            print(f"⚠ Could not copy example.png to input.png: {e}")
 
     # Load base config from project config if available, else defaults.
     if config_aigen_path.exists():
