@@ -109,6 +109,12 @@ project:
   name: test_project
   denoise_max: 0.95
   cfg_max: 15.0
+  # Auto-boost denoise/cfg when inpainting (masking) is active
+  # These values are applied if the current denoise/cfg are below the thresholds
+  inpainting_denoise_min: 0.85  # Minimum denoise when inpainting is active (default: 0.85)
+  inpainting_cfg_min: 10.0      # Minimum cfg when inpainting is active (default: 10.0)
+  inpainting_denoise_threshold: 0.7  # Boost if current denoise < this (default: 0.7)
+  inpainting_cfg_threshold: 9.0      # Boost if current cfg < this (default: 9.0)
 prompts:
   global:
     negative: ''

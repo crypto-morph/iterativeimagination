@@ -283,6 +283,21 @@ class IterativeImagination:
             self.logger.warning(f"Could not check if mask is all-white: {e}")
             return False
 
+    def _get_inpainting_boost_values(self) -> dict:
+        """Get inpainting boost values from rules.yaml project section.
+        
+        Returns dict with keys: denoise_min, cfg_min, denoise_threshold, cfg_threshold
+        """
+        rules = self.rules if isinstance(self.rules, dict) else {}
+        project = rules.get("project") or {}
+        
+        return {
+            "denoise_min": float(project.get("inpainting_denoise_min", 0.85)),
+            "cfg_min": float(project.get("inpainting_cfg_min", 10.0)),
+            "denoise_threshold": float(project.get("inpainting_denoise_threshold", 0.7)),
+            "cfg_threshold": float(project.get("inpainting_cfg_threshold", 9.0)),
+        }
+
     def _get_rules_base_prompts(self, scope: Optional[str]) -> tuple[str, str]:
         """Fetch base prompts from rules.yaml `prompts` section.
 
@@ -590,14 +605,16 @@ class IterativeImagination:
                         current_denoise = float(params.get("denoise", 0.5))
                         current_cfg = float(params.get("cfg", 7.0))
                         
+                        # Get configurable boost values from rules.yaml
+                        boost = self._get_inpainting_boost_values()
+                        
                         # If denoise/cfg are at default or low values, boost them for inpainting
-                        # For dramatic clothing changes (suit → snowsuit), we need higher denoise
-                        if current_denoise < 0.7:
-                            params["denoise"] = 0.85  # Start higher for inpainting (was 0.75, but clothing changes need more)
-                            self.logger.info(f"Boosted denoise to {params['denoise']} for inpainting (mask: {active_mask_name or 'default'})")
-                        if current_cfg < 9.0:
-                            params["cfg"] = 10.0  # Start higher for inpainting
-                            self.logger.info(f"Boosted cfg to {params['cfg']} for inpainting (mask: {active_mask_name or 'default'})")
+                        if current_denoise < boost["denoise_threshold"]:
+                            params["denoise"] = boost["denoise_min"]
+                            self.logger.info(f"Boosted denoise to {params['denoise']} for inpainting (mask: {active_mask_name or 'default'}, from rules.yaml)")
+                        if current_cfg < boost["cfg_threshold"]:
+                            params["cfg"] = boost["cfg_min"]
+                            self.logger.info(f"Boosted cfg to {params['cfg']} for inpainting (mask: {active_mask_name or 'default'}, from rules.yaml)")
                         
                         aigen_config["parameters"] = params
                         # Save the boosted values back to working/AIGen.yaml
@@ -1833,13 +1850,16 @@ class IterativeImagination:
                 current_denoise = float(params.get("denoise", 0.5))
                 current_cfg = float(params.get("cfg", 7.0))
                 
+                # Get configurable boost values from rules.yaml
+                boost = self._get_inpainting_boost_values()
+                
                 # If denoise/cfg are at default or low values, boost them for inpainting
-                if current_denoise < 0.7:
-                    params["denoise"] = 0.75  # Start higher for inpainting
-                    self.logger.info(f"Boosted denoise to {params['denoise']} for inpainting (mask: {mask_name})")
-                if current_cfg < 9.0:
-                    params["cfg"] = 10.0  # Start higher for inpainting
-                    self.logger.info(f"Boosted cfg to {params['cfg']} for inpainting (mask: {mask_name})")
+                if current_denoise < boost["denoise_threshold"]:
+                    params["denoise"] = boost["denoise_min"]
+                    self.logger.info(f"Boosted denoise to {params['denoise']} for inpainting (mask: {mask_name}, from rules.yaml)")
+                if current_cfg < boost["cfg_threshold"]:
+                    params["cfg"] = boost["cfg_min"]
+                    self.logger.info(f"Boosted cfg to {params['cfg']} for inpainting (mask: {mask_name}, from rules.yaml)")
                 
                 aigen_config["parameters"] = params
                 self.project.save_aigen_config(aigen_config)

@@ -3,6 +3,12 @@ project:
   max_iterations: 10
   # If true, the rules suggester will not print AI-provided `general_notes` lines (handy for restricted projects).
   # disable_general_notes: true
+  # Auto-boost denoise/cfg when inpainting (masking) is active
+  # These values are applied if the current denoise/cfg are below the thresholds
+  inpainting_denoise_min: 0.85  # Minimum denoise when inpainting is active
+  inpainting_cfg_min: 10.0      # Minimum cfg when inpainting is active
+  inpainting_denoise_threshold: 0.7  # Boost if current denoise < this
+  inpainting_cfg_threshold: 9.0      # Boost if current cfg < this
 
 acceptance_criteria:
   - field: clothing_style_changed
