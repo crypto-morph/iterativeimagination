@@ -258,6 +258,31 @@ class IterativeImagination:
             self.original_description = self.aivis.describe_image(str(self.input_image_path))
         return self.original_description
 
+    def _mask_is_all_white(self, mask_path: Path) -> bool:
+        """Check if a mask image is all white (or nearly all white), indicating everything is editable.
+        
+        Returns True if >95% of pixels are white (>= 240 in grayscale).
+        """
+        try:
+            from PIL import Image
+            import numpy as np
+            
+            img = Image.open(mask_path).convert("L")
+            arr = np.array(img)
+            
+            # Count pixels that are white (>= 240 to account for slight variations)
+            white_pixels = np.sum(arr >= 240)
+            total_pixels = arr.size
+            
+            if total_pixels == 0:
+                return False
+            
+            white_ratio = white_pixels / total_pixels
+            return white_ratio >= 0.95
+        except Exception as e:
+            self.logger.warning(f"Could not check if mask is all-white: {e}")
+            return False
+
     def _get_rules_base_prompts(self, scope: Optional[str]) -> tuple[str, str]:
         """Fetch base prompts from rules.yaml `prompts` section.
 
