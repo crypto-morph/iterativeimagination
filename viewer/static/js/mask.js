@@ -214,6 +214,35 @@ async function saveMask() {
   setStatus(`Saved '${maskName}' (backup created if it existed).`);
 }
 
+async function suggestMask() {
+  const text = ($("suggestText").value || "").trim();
+  if (!text) {
+    setStatus("Type what to mask first (e.g. 'left woman').");
+    return;
+  }
+  setStatus(`Suggesting mask '${maskName}' for: ${text}`);
+  $("btnSuggestMask").disabled = true;
+  try {
+    const res = await fetch(`/api/project/${project}/input/mask_suggest`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mask_name: maskName, query: text, threshold: 0.30 })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setStatus(data.error || "Mask suggestion failed.");
+      return;
+    }
+    await refreshMaskList();
+    await loadExistingMask();
+    setStatus(`Suggested mask saved to '${maskName}'. You can refine it with the brush.`);
+  } catch (e) {
+    setStatus(`Mask suggestion failed: ${e.message}`);
+  } finally {
+    $("btnSuggestMask").disabled = false;
+  }
+}
+
 function createMask() {
   const raw = $("newMaskName").value;
   const n = validateMaskName(raw);
@@ -235,6 +264,8 @@ function wire() {
     await loadExistingMask();
   });
   $("btnCreateMask").addEventListener("click", createMask);
+  const suggestBtn = $("btnSuggestMask");
+  if (suggestBtn) suggestBtn.addEventListener("click", suggestMask);
   $("toolBrush").addEventListener("click", () => setActiveTool("brush"));
   $("toolEraser").addEventListener("click", () => setActiveTool("eraser"));
   $("btnClear").addEventListener("click", clearMask);

@@ -6,6 +6,9 @@ Iteration Viewer - Web app to visualize iteration images and metadata
 import json
 import threading
 import base64
+import os
+import shutil
+import time
 from pathlib import Path
 from flask import Flask, render_template, jsonify, send_from_directory, request, Response
 import yaml
@@ -325,6 +328,118 @@ def save_named_mask(project_name: str, mask_name: str):
         return jsonify({"error": f"Failed to save mask: {e}"}), 500
 
 
+@app.route('/api/project/<project_name>/input/mask_suggest', methods=['POST'])
+def suggest_mask(project_name: str):
+    """Generate a mask from a text query via ComfyUI (GroundingDINO + SAM2) and save it into the project.
+
+    Payload:
+      { "mask_name": "left", "query": "left woman", "threshold": 0.30 }
+    """
+    payload = request.get_json(silent=True) or {}
+    mask_name = payload.get("mask_name") or payload.get("name") or "default"
+    query = payload.get("query") or payload.get("text") or payload.get("prompt") or ""
+    threshold = payload.get("threshold", 0.30)
+
+    if not isinstance(query, str) or not query.strip():
+        return jsonify({"error": "Missing query text"}), 400
+    try:
+        threshold_f = float(threshold)
+    except Exception:
+        threshold_f = 0.30
+    threshold_f = max(0.0, min(1.0, threshold_f))
+
+    try:
+        project_dir = _safe_project_dir(project_name)
+        mname = _safe_mask_name(str(mask_name))
+    except Exception:
+        return jsonify({"error": "Invalid project or mask name"}), 400
+
+    # Locate input image
+    input_path = project_dir / "input" / "input.png"
+    if not input_path.exists():
+        return jsonify({"error": "Project input image not found (expected input/input.png)"}), 404
+
+    # Load ComfyUI host/port from project config
+    aigen = _load_project_aigen(project_dir)
+    comfy = aigen.get("comfyui") if isinstance(aigen, dict) else {}
+    host = (comfy.get("host") if isinstance(comfy, dict) else None) or "localhost"
+    port = int((comfy.get("port") if isinstance(comfy, dict) else None) or 8188)
+
+    # Import ComfyUI client (in src/)
+    try:
+        import sys as _sys
+        from pathlib import Path as _Path
+        _sys.path.insert(0, str(_Path(__file__).parent.parent / "src"))
+        from comfyui_client import ComfyUIClient  # noqa: E402
+    except Exception as e:
+        return jsonify({"error": f"Failed to import ComfyUI client: {e}"}), 500
+
+    client = ComfyUIClient(host=host, port=port)
+    if not client.test_connection():
+        return jsonify({"error": f"ComfyUI not reachable at {host}:{port}"}), 502
+
+    comfyui_input_dir = _find_comfyui_input_dir()
+    try:
+        comfy_input_filename = _copy_to_comfyui_input(project_name, input_path, comfyui_input_dir)
+    except Exception as e:
+        return jsonify({"error": f"Failed to copy input image to ComfyUI input dir: {e}"}), 500
+
+    # Build a minimal workflow:
+    # LoadImage -> GroundingDinoModelLoader -> SAM2ModelLoader -> GroundingDinoSAM2Segment -> MaskToImage -> SaveImage
+    prefix = f"iterative_imagination_{project_name}_mask_suggest_{mname}"
+    workflow = {
+        "1": {"class_type": "LoadImage", "inputs": {"image": comfy_input_filename}},
+        "2": {"class_type": "GroundingDinoModelLoader (segment anything2)", "inputs": {"model_name": "GroundingDINO_SwinT_OGC (694MB)"}},
+        "3": {"class_type": "SAM2ModelLoader (segment anything2)", "inputs": {"model_name": "sam2_hiera_small.pt"}},
+        "4": {"class_type": "GroundingDinoSAM2Segment (segment anything2)", "inputs": {
+            "sam_model": ["3", 0],
+            "grounding_dino_model": ["2", 0],
+            "image": ["1", 0],
+            "prompt": query.strip(),
+            "threshold": threshold_f,
+        }},
+        "5": {"class_type": "MaskToImage", "inputs": {"mask": ["4", 1]}},
+        "6": {"class_type": "SaveImage", "inputs": {"images": ["5", 0], "filename_prefix": prefix}},
+    }
+
+    try:
+        prompt_id = client.queue_prompt(workflow)
+        ok = client.wait_for_completion(prompt_id, max_wait=600)
+        if not ok:
+            return jsonify({"error": "Timed out waiting for ComfyUI mask generation"}), 504
+        hist = client.get_history(prompt_id)
+        rec = hist.get(prompt_id) or {}
+        outputs = rec.get("outputs") or {}
+        out6 = outputs.get("6") or {}
+        images = out6.get("images") or []
+        if not images:
+            return jsonify({"error": "ComfyUI did not return an output image for the mask"}), 500
+        img0 = images[0]
+        filename = img0.get("filename")
+        subfolder = img0.get("subfolder", "")
+        ftype = img0.get("type", "output")
+        if not filename:
+            return jsonify({"error": "ComfyUI output image missing filename"}), 500
+        raw = client.download_image(filename, subfolder=subfolder, folder_type=ftype)
+    except Exception as e:
+        return jsonify({"error": f"Mask generation failed: {e}"}), 500
+
+    # Save result into project
+    input_dir = project_dir / "input"
+    if mname == "default":
+        out_path = input_dir / "mask.png"
+    else:
+        (input_dir / "masks").mkdir(parents=True, exist_ok=True)
+        out_path = input_dir / "masks" / f"{mname}.png"
+
+    try:
+        out_path.write_bytes(raw)
+    except Exception as e:
+        return jsonify({"error": f"Failed to write mask to {out_path}: {e}"}), 500
+
+    return jsonify({"ok": True, "mask_name": mname, "file": str(out_path.relative_to(project_dir))}), 200
+
+
 @app.route('/api/project/<project_name>/config')
 def get_project_config(project_name: str):
     """Get project configuration (rules.yaml)."""
@@ -370,6 +485,44 @@ def _list_project_masks(project_dir: Path) -> list[dict]:
                 continue
             masks.append({"name": safe, "file": f"input/masks/{p.name}"})
     return masks
+
+
+def _find_comfyui_input_dir() -> Path:
+    """Best-effort ComfyUI input directory discovery (mirrors ProjectManager.find_comfyui_input_dir)."""
+    env_path = os.environ.get("COMFYUI_DIR")
+    if env_path:
+        comfyui_dir = Path(env_path).expanduser().resolve()
+        if (comfyui_dir / "main.py").exists():
+            return comfyui_dir / "input"
+
+    # Common location for this setup
+    p = Path.home() / "ComfyUI" / "input"
+    if p.exists():
+        return p
+
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _copy_to_comfyui_input(project_name: str, input_image_path: Path, comfyui_input_dir: Path) -> str:
+    """Copy a file into ComfyUI input dir with a unique name; return filename."""
+    stamp = time.time_ns()
+    stem = (input_image_path.stem or "input").replace(" ", "_")
+    filename = f"iterative_imagination_{project_name}_{stem}_{stamp}.png"
+    comfyui_input_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(input_image_path, comfyui_input_dir / filename)
+    return filename
+
+
+def _load_project_aigen(project_dir: Path) -> dict:
+    """Load project config/working AIGen.yaml for ComfyUI host/port."""
+    for p in [project_dir / "working" / "AIGen.yaml", project_dir / "config" / "AIGen.yaml"]:
+        if p.exists():
+            try:
+                return yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+            except Exception:
+                continue
+    return {}
 
 
 def _working_aigen_path(project_dir: Path) -> Path:
