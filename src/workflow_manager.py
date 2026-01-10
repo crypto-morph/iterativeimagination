@@ -193,12 +193,22 @@ class WorkflowManager:
         # Update CheckpointLoaderSimple
         model_cfg = aigen_config.get("model") or {}
         ckpt_name = model_cfg.get("ckpt_name")
+        ckpt_switched = False
         # Optional: allow a dedicated inpaint checkpoint when a mask is used.
         if mask_image_path:
-            ckpt_name = model_cfg.get("ckpt_name_inpaint") or model_cfg.get("inpaint_ckpt_name") or ckpt_name
+            inpaint_ckpt = model_cfg.get("ckpt_name_inpaint") or model_cfg.get("inpaint_ckpt_name")
+            if inpaint_ckpt:
+                ckpt_name = inpaint_ckpt
+                ckpt_switched = True
         for node_id, node_data in _iter_nodes_by_type("CheckpointLoaderSimple"):
             if isinstance(node_data.get("inputs"), dict) and ckpt_name:
                 node_data["inputs"]["ckpt_name"] = ckpt_name
+        
+        # Store checkpoint info in workflow metadata for logging
+        if "_workflow_metadata" not in workflow_copy:
+            workflow_copy["_workflow_metadata"] = {}
+        workflow_copy["_workflow_metadata"]["checkpoint_used"] = ckpt_name
+        workflow_copy["_workflow_metadata"]["checkpoint_switched"] = ckpt_switched
         
         # Update KSampler
         params = aigen_config.get('parameters', {}) or {}

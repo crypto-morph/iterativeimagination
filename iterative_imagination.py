@@ -710,8 +710,16 @@ class IterativeImagination:
             control_image_path=control_filename,
         )
         
+        # Log checkpoint info
+        wf_meta = updated_workflow.get("_workflow_metadata", {})
+        ckpt_used = wf_meta.get("checkpoint_used", "unknown")
+        ckpt_switched = wf_meta.get("checkpoint_switched", False)
+        if ckpt_switched:
+            self.logger.info(f"Using inpainting checkpoint: {ckpt_used}")
+        else:
+            self.logger.info(f"Using checkpoint: {ckpt_used}")
+        
         # Queue workflow
-        self.logger.info("Queueing workflow to ComfyUI...")
         try:
             prompt_id = self.comfyui.queue_prompt(updated_workflow)
             self.logger.info(f"Prompt ID: {prompt_id}")
