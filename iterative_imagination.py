@@ -455,6 +455,11 @@ class IterativeImagination:
         # Load current AIGen.yaml
         aigen_config = self.project.load_aigen_config()
         project_cfg = (self.rules.get("project") or {}) if isinstance(self.rules, dict) else {}
+        
+        # Auto-boost denoise/cfg when masking is enabled (inpainting allows higher edit strength)
+        # This will be applied after mask detection, but we check here to avoid duplicate boosts
+        mask_cfg = aigen_config.get("masking") or {}
+        mask_enabled_precheck = bool(mask_cfg.get("enabled", True))
         lock_seed = bool(project_cfg.get("lock_seed"))
         if lock_seed:
             params = aigen_config.get("parameters") or {}
@@ -564,6 +569,25 @@ class IterativeImagination:
                 if resolved_mask_path is not None:
                     try:
                         mask_filename = self.project.prepare_input_image(resolved_mask_path, self.comfyui_input_dir)
+                        # Boost denoise/cfg for inpainting (masks allow higher edit strength)
+                        params = aigen_config.get("parameters", {})
+                        current_denoise = float(params.get("denoise", 0.5))
+                        current_cfg = float(params.get("cfg", 7.0))
+                        
+                        # If denoise/cfg are at default or low values, boost them for inpainting
+                        if current_denoise < 0.7:
+                            params["denoise"] = 0.75  # Start higher for inpainting
+                            self.logger.info(f"Boosted denoise to {params['denoise']} for inpainting (mask: {active_mask_name or 'default'})")
+                        if current_cfg < 9.0:
+                            params["cfg"] = 10.0  # Start higher for inpainting
+                            self.logger.info(f"Boosted cfg to {params['cfg']} for inpainting (mask: {active_mask_name or 'default'})")
+                        
+                        aigen_config["parameters"] = params
+                        # Save the boosted values back to working/AIGen.yaml
+                        try:
+                            self.project.save_aigen_config(aigen_config)
+                        except Exception:
+                            pass
                     except Exception:
                         mask_filename = None
 
