@@ -45,12 +45,13 @@ acceptance_criteria:
   max: 1
   min: 0
   must_include:
-  - lady wearing snowsuit
-  question: Is this person wearing a snowsuit?
+  - this lady wearing a summer dress
+  question: Is this person wearing a summer dress?
   type: boolean
 - avoid_terms: []
   ban_terms:
   - business suit
+  - business attire
   - shirt
   edit_strength: medium
   field: middle_outfit
@@ -109,6 +110,7 @@ project:
   name: test_project
   denoise_max: 0.95
   cfg_max: 15.0
+  improve_prompts: false  # Disable prompt improvement for testing (default: false)
   # Auto-boost denoise/cfg when inpainting (masking) is active
   # These values are applied if the current denoise/cfg are below the thresholds
   inpainting_denoise_min: 0.85  # Minimum denoise when inpainting is active (default: 0.85)
@@ -124,10 +126,8 @@ prompts:
       negative: ''
       positive: ''
     left:
-      negative: business suit, shirt, different facial features, different pose,
-        different body proportions
-      positive: snowsuit, three women in a professional setting, modern office, identical
-        facial features, same pose, identical body proportions, identical background
+      negative: business suit, business attire, shirt
+      positive: this lady wearing a summer dress
     middle:
       positive: hawaiian skirt, coconut bra, professional setting, three women, midline,
         identical facial features, same pose, identical body proportions, background
