@@ -1356,11 +1356,17 @@ class IterativeImagination:
                     protected_terms.append(t_str)
             
             # Temporarily remove protected terms, prune, then add them back
+            # IMPORTANT: Use substring matching for multi-word terms like "lady wearing snowsuit"
             temp_positive = improved_positive
             for pt in protected_terms:
-                # Remove protected term temporarily (case-insensitive, whole word)
+                # Remove protected term temporarily (case-insensitive, substring match for phrases)
                 import re
-                temp_positive = re.sub(rf"\b{re.escape(pt)}\b", "", temp_positive, flags=re.IGNORECASE)
+                pt_escaped = re.escape(pt)
+                # For multi-word terms, use substring match; for single words, use word boundary
+                if " " in pt:
+                    temp_positive = re.sub(pt_escaped, "", temp_positive, flags=re.IGNORECASE)
+                else:
+                    temp_positive = re.sub(rf"\b{pt_escaped}\b", "", temp_positive, flags=re.IGNORECASE)
             
             improved_positive = _prune_weird_tokens(temp_positive)
             improved_negative = _prune_weird_tokens(improved_negative)
