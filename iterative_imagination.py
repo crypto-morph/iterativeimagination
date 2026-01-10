@@ -581,8 +581,10 @@ class IterativeImagination:
                             self.logger.info(f"Mask coverage: {coverage:.1f}% white (editable), {100-coverage:.1f}% black (preserved)")
                             if coverage > 50:
                                 self.logger.warning(f"Mask covers {coverage:.1f}% of image - this may affect all subjects, not just the target!")
+                        except ImportError as e:
+                            self.logger.warning(f"Could not analyze mask coverage (PIL/numpy not available): {e}")
                         except Exception as e:
-                            self.logger.debug(f"Could not analyze mask coverage: {e}")
+                            self.logger.warning(f"Could not analyze mask coverage: {e}", exc_info=True)
                         # Boost denoise/cfg for inpainting (masks allow higher edit strength)
                         params = aigen_config.get("parameters", {})
                         current_denoise = float(params.get("denoise", 0.5))
