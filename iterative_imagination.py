@@ -564,11 +564,25 @@ class IterativeImagination:
             if resolved_mask_path is not None:
                 # If the mask is all white (everything editable), prefer running without inpaint.
                 if self._mask_is_all_white(resolved_mask_path):
-                    self.logger.info("Mask appears all-white; treating as no-mask (non-inpaint) run.")
+                    self.logger.warning("Mask appears all-white (>95% white pixels); treating as no-mask (non-inpaint) run.")
                     resolved_mask_path = None
                 if resolved_mask_path is not None:
                     try:
                         mask_filename = self.project.prepare_input_image(resolved_mask_path, self.comfyui_input_dir)
+                        # Log mask info for debugging
+                        try:
+                            from PIL import Image
+                            import numpy as np
+                            img = Image.open(resolved_mask_path).convert("L")
+                            arr = np.array(img)
+                            white = np.sum(arr >= 128)  # Pixels that are white (editable)
+                            total = arr.size
+                            coverage = white / total * 100
+                            self.logger.info(f"Mask coverage: {coverage:.1f}% white (editable), {100-coverage:.1f}% black (preserved)")
+                            if coverage > 50:
+                                self.logger.warning(f"Mask covers {coverage:.1f}% of image - this may affect all subjects, not just the target!")
+                        except Exception as e:
+                            self.logger.debug(f"Could not analyze mask coverage: {e}")
                         # Boost denoise/cfg for inpainting (masks allow higher edit strength)
                         params = aigen_config.get("parameters", {})
                         current_denoise = float(params.get("denoise", 0.5))
