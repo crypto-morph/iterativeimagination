@@ -606,6 +606,16 @@ class IterativeImagination:
         inpaint_mode = bool(mask_filename)
         if inpaint_mode and not bool(project_cfg.get("lock_seed_inpaint", False)):
             lock_seed = False
+            # Also clear any existing seed to ensure variation between iterations
+            params = aigen_config.get("parameters", {})
+            if "seed" in params and params.get("seed") is not None:
+                params["seed"] = None
+                aigen_config["parameters"] = params
+                try:
+                    self.project.save_aigen_config(aigen_config)
+                    self.logger.info("Cleared seed for inpainting mode to allow variation")
+                except Exception:
+                    pass
 
         # If AIGen.yaml prompts are empty, initialise from rules.yaml base prompts (global or per-mask).
         prompts_cfg = aigen_config.get("prompts") or {}
@@ -1386,19 +1396,52 @@ class IterativeImagination:
                     filtered_parts.append(part)
             
             # Add change terms first (for weight), then preserve terms, then rest
+            # IMPORTANT: Always add must_include terms even if they appear in pos_parts,
+            # because the AI might have removed them or they might be in a different form.
+            # We'll deduplicate later, but we want to ensure they're at the front for weight.
             change_terms_to_add = []
             for t in change_must_include:
-                t_lower = str(t).strip().lower()
-                if not any(t_lower in p.lower() or p.lower() in t_lower for p in pos_parts):
-                    change_terms_to_add.append(str(t).strip())
+                t_str = str(t).strip()
+                if t_str:
+                    # Check if a close variant exists (substring match)
+                    t_lower = t_str.lower()
+                    found_variant = any(t_lower in p.lower() or p.lower() in t_lower for p in pos_parts)
+                    if not found_variant:
+                        change_terms_to_add.append(t_str)
+                    else:
+                        # If variant exists, move it to front by removing from filtered_parts and adding to change_terms_to_add
+                        for i, p in enumerate(filtered_parts):
+                            if t_lower in p.lower() or p.lower() in t_lower:
+                                change_terms_to_add.append(p)
+                                filtered_parts.pop(i)
+                                break
             
             preserve_terms_to_add = []
             for t in preserve_must_include:
-                t_lower = str(t).strip().lower()
-                if not any(t_lower in p.lower() or p.lower() in t_lower for p in pos_parts):
-                    preserve_terms_to_add.append(str(t).strip())
+                t_str = str(t).strip()
+                if t_str:
+                    t_lower = t_str.lower()
+                    found_variant = any(t_lower in p.lower() or p.lower() in t_lower for p in pos_parts)
+                    if not found_variant:
+                        preserve_terms_to_add.append(t_str)
+                    else:
+                        # Move variant to preserve section
+                        for i, p in enumerate(filtered_parts):
+                            if t_lower in p.lower() or p.lower() in t_lower:
+                                preserve_terms_to_add.append(p)
+                                filtered_parts.pop(i)
+                                break
             
-            improved_positive = ", ".join(change_terms_to_add + preserve_terms_to_add + filtered_parts).strip(" ,\n")
+            # Deduplicate final list (case-insensitive)
+            final_parts = []
+            seen_lower = set()
+            for part in (change_terms_to_add + preserve_terms_to_add + filtered_parts):
+                part_lower = part.lower().strip()
+                if part_lower and part_lower not in seen_lower:
+                    seen_lower.add(part_lower)
+                    final_parts.append(part)
+            
+            improved_positive = ", ".join(final_parts).strip(" ,\n")
 
             # Ensure banned terms appear in negative
             if ban_terms:
