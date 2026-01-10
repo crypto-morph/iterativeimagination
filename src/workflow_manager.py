@@ -267,11 +267,11 @@ class WorkflowManager:
                 inputs = node_data.get("inputs")
                 if not isinstance(inputs, dict):
                     continue
-                    if isinstance(mask_image_path, str) and '/' not in mask_image_path:
+                if isinstance(mask_image_path, str) and '/' not in mask_image_path:
                     inputs['image'] = mask_image_path
-                    else:
+                else:
                     inputs['image'] = Path(mask_image_path).name
                 # Only update the first LoadImageMask by default
-                    break
+                break
         
         return workflow_copy
