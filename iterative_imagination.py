@@ -1583,12 +1583,21 @@ class IterativeImagination:
             
             # Final safety check: ensure all change-intent must_include terms are in the positive prompt
             # This is a last resort in case they were removed by pruning or deduplication
+            # Use word-level matching to avoid false positives (e.g., "summer" appearing alone doesn't mean "summer dress" is present)
             for t in change_must_include:
                 t_str = str(t).strip()
                 if t_str:
                     t_lower = t_str.lower()
-                    # Check if any part of the prompt contains this term (substring match)
-                    if t_lower not in improved_positive.lower():
+                    # Extract key words from the must_include term (skip common words like "this", "lady", "wearing", "a")
+                    t_words = [w for w in t_lower.split() if len(w) > 3 and w not in ("this", "lady", "wearing", "the", "that")]
+                    # Check if ALL key words appear together in the prompt (not just individually)
+                    # This prevents false matches like "summer" alone matching "summer dress"
+                    prompt_lower = improved_positive.lower()
+                    all_words_present = all(w in prompt_lower for w in t_words) if t_words else False
+                    # Also check if the full phrase appears
+                    full_phrase_present = t_lower in prompt_lower
+                    
+                    if not (full_phrase_present or (len(t_words) > 1 and all_words_present)):
                         # Force add it at the front for maximum weight
                         improved_positive = f"{t_str}, {improved_positive}".strip(" ,\n")
                         self.logger.warning(f"  Force-added missing must_include term to front of positive prompt: {t_str}")
@@ -1614,16 +1623,24 @@ class IterativeImagination:
             
             # Aggressive filter: if we have change-intent criteria with must_include terms,
             # remove any contradictory clothing terms from positive that match ban_terms or common opposites.
-            # This prevents the AI from adding "formal business attire" when we want "snowsuit".
+            # This prevents the AI from adding "formal business attire" when we want "snowsuit" or "summer dress".
             if change_must_include:
                 # Build a list of terms to aggressively remove from positive
                 contradictory_terms = list(ban_terms)  # Start with explicit ban_terms
                 # Add common business/formal clothing terms if we're changing to casual/outdoor wear
                 change_terms_lower = [str(t).strip().lower() for t in change_must_include]
-                if any("snowsuit" in t or "swimsuit" in t or "bikini" in t or "hawaiian" in t or "coconut" in t for t in change_terms_lower):
+                # Check for casual/outdoor wear terms (not just the original list)
+                # Be specific: "summer dress" is casual, but "dress" alone could be formal
+                is_casual_wear = any(
+                    "snowsuit" in t or "swimsuit" in t or "bikini" in t or "hawaiian" in t or "coconut" in t or
+                    "summer dress" in t or ("summer" in t and "dress" in t) or "casual" in t or "outdoor" in t
+                    for t in change_terms_lower
+                )
+                if is_casual_wear:
                     contradictory_terms.extend([
                         "formal business attire", "business suit", "business attire", "formal attire",
-                        "suit", "blazer", "dress shirt", "tie", "professional attire", "corporate attire"
+                        "suit", "blazer", "dress shirt", "tie", "professional attire", "corporate attire",
+                        "black blazer", "dark blue blazer", "gray blazer", "blue blazer", "navy blazer"
                     ])
                 # Remove these from positive
                 improved_positive = _filter_csv_by_terms(improved_positive, contradictory_terms)
