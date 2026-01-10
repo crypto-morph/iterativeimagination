@@ -591,6 +591,50 @@ def _pid_is_running(pid: int) -> bool:
         return False
 
 
+def _find_listening_pids(port: int) -> list[int]:
+    """Best-effort: find PIDs listening on a TCP port (Linux/WSL)."""
+    pids: set[int] = set()
+
+    # Prefer lsof (most reliable)
+    try:
+        out = subprocess.check_output(
+            ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        for line in (out or "").splitlines():
+            line = line.strip()
+            if line.isdigit():
+                pids.add(int(line))
+        if pids:
+            return sorted(pids)
+    except Exception:
+        pass
+
+    # Fallback: ss
+    try:
+        out = subprocess.check_output(
+            ["ss", "-lptn", f"sport = :{port}"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        # Example: users:(("python",pid=45530,fd=6))
+        for part in (out or "").split("pid=")[1:]:
+            pid_str = ""
+            for ch in part:
+                if ch.isdigit():
+                    pid_str += ch
+                else:
+                    break
+            if pid_str:
+                pids.add(int(pid_str))
+        return sorted(pids)
+    except Exception:
+        pass
+
+    return []
+
+
 def viewer_status(host: str = "localhost", port: int = 5000) -> int:
     """Check and display viewer status."""
     viewer_dir = SCRIPT_DIR / "viewer"
@@ -668,8 +712,46 @@ def viewer_stop(port: int = 5000) -> int:
 
     if not pid or not _pid_is_running(pid):
         if check_port_open(host="localhost", port=port):
-            print("⚠ Viewer port is open but PID file/process not found")
-            print("  You may need to stop it manually")
+            # PID file missing or stale; try to discover the listener PID(s).
+            pids = _find_listening_pids(port)
+            if not pids:
+                print("⚠ Viewer port is open but PID file/process not found")
+                print("  You may need to stop it manually")
+                return 1
+
+            print(f"Stopping viewer (found listener PID(s): {', '.join(str(x) for x in pids)})...")
+            for p in pids:
+                try:
+                    os.kill(p, signal.SIGTERM)
+                except Exception:
+                    pass
+
+            # Wait for port to close
+            for _ in range(20):
+                time.sleep(0.25)
+                if not check_port_open(host="localhost", port=port):
+                    try:
+                        pid_file.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                    print("✓ Viewer stopped successfully")
+                    return 0
+
+            print("⚠ Force killing viewer...")
+            for p in pids:
+                try:
+                    os.kill(p, signal.SIGKILL)
+                except Exception:
+                    pass
+            time.sleep(0.5)
+            try:
+                pid_file.unlink(missing_ok=True)
+            except Exception:
+                pass
+            if not check_port_open(host="localhost", port=port):
+                print("✓ Viewer stopped")
+                return 0
+            print("✗ Failed to stop viewer")
             return 1
         print("✓ Viewer is not running")
         return 0
