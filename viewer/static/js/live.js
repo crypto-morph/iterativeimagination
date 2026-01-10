@@ -30,11 +30,11 @@ function showLintBox(title, items, kind) {
   const box = $("rulesLint");
   if (!box) return;
   if (!items || !items.length) {
-    box.classList.add("hidden");
+    box.classList.add("is-hidden");
     box.innerHTML = "";
     return;
   }
-  box.classList.remove("hidden");
+    box.classList.remove("is-hidden");
   box.classList.remove("error", "warn");
   box.classList.add(kind === "error" ? "error" : "warn");
   const li = items.map((x) => `<li>${escapeHtml(String(x))}</li>`).join("");

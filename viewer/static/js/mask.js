@@ -69,8 +69,8 @@ function validateMaskName(name) {
 
 function setActiveTool(name) {
   tool = name;
-  $("toolBrush").classList.toggle("active", tool === "brush");
-  $("toolEraser").classList.toggle("active", tool === "eraser");
+  $("toolBrush").classList.toggle("is-active", tool === "brush");
+  $("toolEraser").classList.toggle("is-active", tool === "eraser");
 }
 
 function getBrushSize() {
@@ -116,10 +116,10 @@ function updateAnchorMarker() {
   const m = $("anchorMarker");
   if (!m) return;
   if (!anchor) {
-    m.classList.add("hidden");
+    m.classList.add("is-hidden");
     return;
   }
-  m.classList.remove("hidden");
+    m.classList.remove("is-hidden");
   // Convert image px -> displayed px
   const xCss = anchor.x / scaleX;
   const yCss = anchor.y / scaleY;

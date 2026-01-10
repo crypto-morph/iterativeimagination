@@ -4,66 +4,126 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Rank Run {{ run_id }} - {{ project_name }}</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        body {
+            background: #f5f5f5 !important;
+            padding: 1.5rem;
+        }
+        .thumb-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 1rem;
+        }
+        .thumb-item {
+            cursor: move;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            overflow: hidden;
+            transition: all 0.2s;
+        }
+        .thumb-item:hover {
+            border-color: #2563eb;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+    </style>
 </head>
 <body>
-    <div class="container">
-        <header>
-            <a href="/project/{{ project_name }}/run/{{ run_id }}" class="back-link">← Back to Run Review</a>
-            <h1>{{ project_name }} - {{ run_id }}</h1>
-            <p>Rank iterations by suitability and add notes</p>
-        </header>
-
-        <main>
-            <div class="rank-toolbar">
-                <div class="rank-toolbar-left">
-                    <button id="saveRanking" class="primary-btn" type="button">Save</button>
-                    <span id="saveStatus" class="save-status"></span>
-                </div>
-                <div class="rank-toolbar-right">
-                    <span class="hint">Drag thumbnails to reorder. Hover to preview. Click to add notes.</span>
+    <div class="container" style="max-width: 1600px;">
+        <nav class="navbar is-light" style="margin-bottom: 1.5rem;">
+            <div class="navbar-brand">
+                <div class="navbar-item">
+                    <a href="/project/{{ project_name }}/run/{{ run_id }}" class="button is-light is-small">
+                        <span class="icon"><i class="fas fa-arrow-left"></i></span>
+                        <span>Back to Run Review</span>
+                    </a>
                 </div>
             </div>
-
-            <div id="rankLoading" class="loading">Loading iterations...</div>
-
-            <div id="rankContent" class="hidden">
-                <div class="rank-layout">
-                    <aside class="rank-preview-pane" aria-label="Preview and notes">
-                        <div class="rank-preview-header">
-                            <div>
-                                <div class="rank-preview-heading">Preview</div>
-                                <div class="rank-preview-subheading">Hover a thumbnail to preview. Click to select and comment.</div>
-                            </div>
-                            <div class="rank-preview-badges">
-                                <span id="previewRank" class="badge">#–</span>
-                                <span id="previewScore" class="badge">–%</span>
-                                <span id="previewIter" class="badge">Iter –</span>
-                            </div>
-                        </div>
-
-                        <div class="rank-preview-image-wrap">
-                            <img id="previewImg" class="rank-preview-image" alt="Preview image">
-                        </div>
-
-                        <label class="rank-notes-label" for="notesEditor">Notes (why good/bad)</label>
-                        <textarea id="notesEditor" class="rank-notes-editor" rows="6" placeholder="Click a thumbnail, then write why it is particularly good or bad…"></textarea>
-                        <div class="rank-notes-help">Saved to <code>working/&lt;run_id&gt;/human/ranking.json</code></div>
-                    </aside>
-
-                    <section class="rank-thumbs-pane" aria-label="Sortable thumbnails">
-                        <div class="rank-thumbs-header">
-                            <div class="rank-thumbs-title">Rank order</div>
-                            <div class="rank-thumbs-subtitle">Best on the left/top. Drag to reorder.</div>
-                        </div>
-                        <div id="thumbGrid" class="thumb-grid" aria-label="Thumbnail grid"></div>
-                    </section>
+            <div class="navbar-menu">
+                <div class="navbar-start">
+                    <div class="navbar-item">
+                        <h1 class="title is-4">{{ project_name }} - {{ run_id }}</h1>
+                    </div>
                 </div>
             </div>
-        </main>
+        </nav>
+
+        <div class="box" style="margin-bottom: 1.5rem;">
+            <p class="has-text-grey">Rank iterations by suitability and add notes</p>
+        </div>
+
+        <div class="box" style="margin-bottom: 1.5rem;">
+            <div class="level">
+                <div class="level-left">
+                    <div class="level-item">
+                        <button id="saveRanking" class="button is-primary" type="button">
+                            <span class="icon"><i class="fas fa-save"></i></span>
+                            <span>Save</span>
+                        </button>
+                    </div>
+                    <div class="level-item">
+                        <span id="saveStatus" class="has-text-grey"></span>
+                    </div>
+                </div>
+                <div class="level-right">
+                    <div class="level-item">
+                        <span class="has-text-grey is-size-7">Drag thumbnails to reorder. Hover to preview. Click to add notes.</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="rankLoading" class="box has-text-centered">
+            <p class="has-text-grey">Loading iterations...</p>
+        </div>
+
+        <div id="rankContent" class="is-hidden">
+            <div class="columns">
+                <div class="column is-4">
+                    <div class="box">
+                        <div class="level mb-4">
+                            <div class="level-left">
+                                <div class="level-item">
+                                    <h3 class="title is-6">Preview</h3>
+                                </div>
+                            </div>
+                            <div class="level-right">
+                                <div class="level-item">
+                                    <div class="tags">
+                                        <span id="previewRank" class="tag">#–</span>
+                                        <span id="previewScore" class="tag">–%</span>
+                                        <span id="previewIter" class="tag">Iter –</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <figure class="image">
+                            <img id="previewImg" alt="Preview image">
+                        </figure>
+                        <div class="field mt-4">
+                            <label class="label is-size-7">Notes (why good/bad)</label>
+                            <div class="control">
+                                <textarea id="notesEditor" class="textarea" rows="6" placeholder="Click a thumbnail, then write why it is particularly good or bad…"></textarea>
+                            </div>
+                        </div>
+                        <p class="is-size-7 has-text-grey mt-2">
+                            Saved to <code>working/&lt;run_id&gt;/human/ranking.json</code>
+                        </p>
+                    </div>
+                </div>
+                <div class="column is-8">
+                    <div class="box">
+                        <h3 class="title is-6">Rank order</h3>
+                        <p class="is-size-7 has-text-grey mb-3">Best on the left/top. Drag to reorder.</p>
+                        <div id="thumbGrid" class="thumb-grid"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script src="{{ url_for('static', filename='js/rank.js') }}"></script>
 </body>
 </html>
-

@@ -4,124 +4,204 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Live Run - {{ project_name }}</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        body {
+            background: #f5f5f5 !important;
+            padding: 1.5rem;
+        }
+        .code-textarea {
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 0.875rem;
+            line-height: 1.5;
+        }
+    </style>
 </head>
 <body>
-    <div class="container">
-        <header>
-            <div style="display:flex; gap:12px; align-items:baseline; justify-content:space-between;">
-                <div>
-                    <h1>Live Run: {{ project_name }}</h1>
-                    <p>One iteration at a time, with human feedback between iterations.</p>
-                </div>
-                <div>
-                    <a class="btn" href="/project/{{ project_name }}/mask">Mask editor</a>
-                    <a class="btn" href="/project/{{ project_name }}/rulesui">Rules UI</a>
-                    <a class="btn" href="/">Back</a>
+    <div class="container" style="max-width: 1400px;">
+        <nav class="navbar is-light" style="margin-bottom: 1.5rem;">
+            <div class="navbar-brand">
+                <div class="navbar-item">
+                    <h1 class="title is-4">Live Run: {{ project_name }}</h1>
                 </div>
             </div>
-        </header>
+            <div class="navbar-menu">
+                <div class="navbar-end">
+                    <div class="navbar-item">
+                        <div class="buttons">
+                            <a class="button is-light" href="/project/{{ project_name }}/mask">
+                                <span class="icon"><i class="fas fa-draw-polygon"></i></span>
+                                <span>Mask editor</span>
+                            </a>
+                            <a class="button is-light" href="/project/{{ project_name }}/rulesui">
+                                <span class="icon"><i class="fas fa-list-check"></i></span>
+                                <span>Rules UI</span>
+                            </a>
+                            <a class="button is-light" href="/">
+                                <span class="icon"><i class="fas fa-arrow-left"></i></span>
+                                <span>Back</span>
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </nav>
 
-        <main>
-            <section class="controls-panel">
-                <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-                    <button id="startBtn" class="btn primary">Start live run</button>
-                    <label style="display:flex; gap:8px; align-items:center;">
+        <div class="box" style="margin-bottom: 1.5rem;">
+            <p class="has-text-grey">One iteration at a time, with human feedback between iterations.</p>
+        </div>
+
+        <div class="box" style="margin-bottom: 1.5rem;">
+            <div class="field is-grouped is-grouped-multiline">
+                <div class="control">
+                    <button id="startBtn" class="button is-primary">Start live run</button>
+                </div>
+                <div class="control">
+                    <label class="checkbox">
                         <input id="resetChk" type="checkbox">
                         Reset checkpoint
                     </label>
-                    <label style="display:flex; gap:8px; align-items:center;">
-                        Max iterations:
-                        <input id="maxIter" type="number" min="1" max="50" value="20" style="width:80px;">
-                    </label>
-                    <span id="statusText" class="muted"></span>
                 </div>
-            </section>
-
-            <section class="rules-editor" style="margin-top:16px;">
-                <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
-                    <h3 style="margin:0;">Rules editor (`config/rules.yaml`)</h3>
-                    <div style="display:flex; gap:10px; flex-wrap:wrap;">
-                        <button id="loadRulesBtn" class="btn">Load rules</button>
-                        <button id="saveRulesBtn" class="btn primary" disabled>Save rules</button>
-                    </div>
+                <div class="control">
+                    <label class="label is-size-7">Max iterations:</label>
+                    <input id="maxIter" class="input" type="number" min="1" max="50" value="20" style="width:80px;">
                 </div>
-                <div id="rulesStatus" class="muted" style="margin-top:8px;"></div>
-                <textarea id="rulesBox" class="code-textarea" placeholder="Click 'Load rules' to edit..."></textarea>
-                <div id="rulesLint" class="lint-box hidden"></div>
-                <div class="muted" style="margin-top:8px;">
-                    Saving creates a backup alongside the file: <code>rules.yaml.bak.&lt;timestamp&gt;</code>.
-                    Live runs re-load rules before each iteration.
-                </div>
-            </section>
-
-            <section class="rules-editor" style="margin-top:16px;">
-                <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
-                    <h3 style="margin:0;">Prompt editor (`working/AIGen.yaml` → prompts)</h3>
-                    <div style="display:flex; gap:10px; flex-wrap:wrap;">
-                        <button id="loadPromptsBtn" class="btn">Load prompts</button>
-                        <button id="savePromptsBtn" class="btn primary" disabled>Save prompts</button>
-                    </div>
-                </div>
-                <div id="promptsStatus" class="muted" style="margin-top:8px;"></div>
-                <div class="prompt-grid">
-                    <div>
-                        <div class="muted" style="margin:8px 0;">Positive prompt</div>
-                        <textarea id="positivePromptBox" class="code-textarea" placeholder="Positive prompt..."></textarea>
-                    </div>
-                    <div>
-                        <div class="muted" style="margin:8px 0;">Negative prompt</div>
-                        <textarea id="negativePromptBox" class="code-textarea" placeholder="Negative prompt..."></textarea>
-                    </div>
-                </div>
-                <div class="muted" style="margin-top:8px;">
-                    Saving writes to <code>working/AIGen.yaml</code> and creates a backup: <code>AIGen.yaml.bak.&lt;timestamp&gt;</code>.
-                </div>
-            </section>
-
-            <div id="turnBanner" class="turn-banner hidden">
-                <div class="turn-banner-inner">
-                    <strong>Your turn:</strong> add a comment / nudges, then click <em>Submit feedback and continue</em>.
+                <div class="control">
+                    <label class="label is-size-7">&nbsp;</label>
+                    <span id="statusText" class="has-text-grey"></span>
                 </div>
             </div>
+        </div>
 
-            <section class="compare-panel" style="margin-top:16px;">
-                <div class="compare-grid">
-                    <div class="compare-item">
-                        <h3>Original</h3>
-                        <img id="origImg" class="compare-image" src="/api/project/{{ project_name }}/input/image" alt="Original">
-                    </div>
-                    <div class="compare-item">
-                        <h3>Latest</h3>
-                        <div id="spinnerOverlay" class="spinner-overlay hidden" aria-hidden="true">
-                            <div class="spinner" aria-hidden="true"></div>
-                            <div class="spinner-text">Generating next iteration…</div>
+        <div class="columns">
+            <div class="column is-6">
+                <div class="box">
+                    <div class="level">
+                        <div class="level-left">
+                            <div class="level-item">
+                                <h3 class="title is-6">Rules editor (<code>config/rules.yaml</code>)</h3>
+                            </div>
                         </div>
-                        <img id="latestImg" class="compare-image" src="" alt="Latest (will appear after iteration 1)">
-                        <div id="latestMeta" class="meta-box"></div>
+                        <div class="level-right">
+                            <div class="level-item">
+                                <div class="buttons">
+                                    <button id="loadRulesBtn" class="button is-small is-light">Load</button>
+                                    <button id="saveRulesBtn" class="button is-small is-primary" disabled>Save</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="rulesStatus" class="has-text-grey is-size-7 mb-2"></div>
+                    <div class="field">
+                        <div class="control">
+                            <textarea id="rulesBox" class="textarea code-textarea" placeholder="Click 'Load' to edit..." style="min-height:200px;"></textarea>
+                        </div>
+                    </div>
+                    <div id="rulesLint" class="notification is-hidden"></div>
+                    <p class="is-size-7 has-text-grey mt-2">
+                        Saving creates a backup: <code>rules.yaml.bak.&lt;timestamp&gt;</code>.
+                    </p>
+                </div>
+            </div>
+            <div class="column is-6">
+                <div class="box">
+                    <div class="level">
+                        <div class="level-left">
+                            <div class="level-item">
+                                <h3 class="title is-6">Prompt editor (<code>working/AIGen.yaml</code>)</h3>
+                            </div>
+                        </div>
+                        <div class="level-right">
+                            <div class="level-item">
+                                <div class="buttons">
+                                    <button id="loadPromptsBtn" class="button is-small is-light">Load</button>
+                                    <button id="savePromptsBtn" class="button is-small is-primary" disabled>Save</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="promptsStatus" class="has-text-grey is-size-7 mb-2"></div>
+                    <div class="field">
+                        <label class="label is-size-7">Positive prompt</label>
+                        <div class="control">
+                            <textarea id="positivePromptBox" class="textarea code-textarea" placeholder="Positive prompt..."></textarea>
+                        </div>
+                    </div>
+                    <div class="field">
+                        <label class="label is-size-7">Negative prompt</label>
+                        <div class="control">
+                            <textarea id="negativePromptBox" class="textarea code-textarea" placeholder="Negative prompt..."></textarea>
+                        </div>
+                    </div>
+                    <p class="is-size-7 has-text-grey mt-2">
+                        Saving writes to <code>working/AIGen.yaml</code>.
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <div id="turnBanner" class="notification is-info is-hidden">
+            <strong>Your turn:</strong> add a comment / nudges, then click <em>Submit feedback and continue</em>.
+        </div>
+
+        <div class="box" style="margin-top: 1.5rem;">
+            <div class="columns">
+                <div class="column">
+                    <h3 class="title is-6">Original</h3>
+                    <figure class="image">
+                        <img id="origImg" src="/api/project/{{ project_name }}/input/image" alt="Original">
+                    </figure>
+                </div>
+                <div class="column">
+                    <h3 class="title is-6">Latest</h3>
+                    <div style="position: relative;">
+                        <figure class="image">
+                            <img id="latestImg" src="" alt="Latest (will appear after iteration 1)">
+                        </figure>
+                        <div id="spinnerOverlay" class="is-hidden" style="position:absolute; inset:0; background:rgba(0,0,0,0.5); display:flex; align-items:center; justify-content:center; flex-direction:column; border-radius:8px;">
+                            <div class="spinner"></div>
+                            <div class="has-text-white has-text-weight-bold mt-2">Generating next iteration…</div>
+                        </div>
+                        <div id="latestMeta" class="box mt-2"></div>
                     </div>
                 </div>
-            </section>
+            </div>
+        </div>
 
-            <section id="feedbackPanel" class="feedback-panel" style="margin-top:16px;">
-                <h3>Your feedback (used for the next iteration)</h3>
-                <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
-                    <button id="btnLessRandom" class="btn">Less random</button>
-                    <button id="btnTooSimilar" class="btn">Too similar</button>
-                    <span class="muted">These nudge the next iteration gently by adjusting denoise/CFG.</span>
+        <div class="box" style="margin-top: 1.5rem;">
+            <h3 class="title is-6">Your feedback (used for the next iteration)</h3>
+            <div class="field is-grouped mb-3">
+                <div class="control">
+                    <button id="btnLessRandom" class="button is-light">Less random</button>
                 </div>
-                <textarea id="commentBox" placeholder="Type a comment, e.g. 'Keep the pose, improve lighting, remove green clothing, more realistic skin texture'"></textarea>
-                <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-                    <button id="submitFeedbackBtn" class="btn primary" disabled>Submit feedback and continue</button>
-                    <span id="feedbackHint" class="muted"></span>
+                <div class="control">
+                    <button id="btnTooSimilar" class="button is-light">Too similar</button>
                 </div>
-            </section>
+                <div class="control">
+                    <span class="has-text-grey is-size-7">These nudge the next iteration gently by adjusting denoise/CFG.</span>
+                </div>
+            </div>
+            <div class="field">
+                <div class="control">
+                    <textarea id="commentBox" class="textarea" placeholder="Type a comment, e.g. 'Keep the pose, improve lighting, remove green clothing, more realistic skin texture'"></textarea>
+                </div>
+            </div>
+            <div class="field is-grouped">
+                <div class="control">
+                    <button id="submitFeedbackBtn" class="button is-primary" disabled>Submit feedback and continue</button>
+                </div>
+                <div class="control">
+                    <span id="feedbackHint" class="has-text-grey"></span>
+                </div>
+            </div>
+        </div>
 
-            <section style="margin-top:18px;">
-                <h3>All iterations (latest at top)</h3>
-                <div id="iterationsList" class="iterations-list"></div>
-            </section>
-        </main>
+        <div class="box" style="margin-top: 1.5rem;">
+            <h3 class="title is-6">All iterations (latest at top)</h3>
+            <div id="iterationsList"></div>
+        </div>
     </div>
 
     <script>
@@ -130,4 +210,3 @@
     <script src="{{ url_for('static', filename='js/live.js') }}"></script>
 </body>
 </html>
-

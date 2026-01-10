@@ -73,8 +73,8 @@ async function loadIterations() {
         
         applyIterations(data.iterations || []);
         lastFingerprint = computeFingerprint(allIterations);
-        document.getElementById('loading').classList.add('hidden');
-        document.getElementById('content').classList.remove('hidden');
+        document.getElementById('loading').classList.add('is-hidden');
+        document.getElementById('content').classList.remove('is-hidden');
     } catch (error) {
         document.getElementById('loading').textContent = 'Error loading iterations: ' + error.message;
     }
@@ -118,11 +118,11 @@ function highlightSelectedButton() {
     if (!container) return;
     container.querySelectorAll('.iter-btn').forEach(btn => {
         const n = Number(btn.dataset.iteration);
-        if (n === selectedIterationNumber) btn.classList.add('active');
-        else btn.classList.remove('active');
+        if (n === selectedIterationNumber) btn.classList.add('is-active');
+        else btn.classList.remove('is-active');
     });
     // Try to keep selection visible
-    const active = container.querySelector('.iter-btn.active');
+    const active = container.querySelector('.iter-btn.is-active');
     if (active && typeof active.scrollIntoView === 'function') {
         active.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
     }
@@ -321,15 +321,15 @@ document.getElementById('nextIteration')?.addEventListener('click', () => {
 // Sort button handlers
 document.getElementById('sortTimeline')?.addEventListener('click', () => {
     currentSort = 'timeline';
-    document.getElementById('sortTimeline').classList.add('active');
-    document.getElementById('sortScore').classList.remove('active');
+    document.getElementById('sortTimeline').classList.add('is-active');
+    document.getElementById('sortScore').classList.remove('is-active');
     sortAndDisplayIterations();
 });
 
 document.getElementById('sortScore')?.addEventListener('click', () => {
     currentSort = 'score';
-    document.getElementById('sortScore').classList.add('active');
-    document.getElementById('sortTimeline').classList.remove('active');
+    document.getElementById('sortScore').classList.add('is-active');
+    document.getElementById('sortTimeline').classList.remove('is-active');
     sortAndDisplayIterations();
 });
 

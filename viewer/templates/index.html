@@ -4,46 +4,84 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Iterative Imagination - Project Viewer</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        body {
+            background: #f5f5f5 !important;
+            padding: 1.5rem;
+        }
+    </style>
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>🎨 Iterative Imagination Viewer</h1>
-            <p>Browse projects and view iteration progress</p>
-        </header>
+    <div class="container" style="max-width: 1200px;">
+        <nav class="navbar is-light" style="margin-bottom: 2rem;">
+            <div class="navbar-brand">
+                <div class="navbar-item">
+                    <h1 class="title is-4">🎨 Iterative Imagination Viewer</h1>
+                </div>
+            </div>
+        </nav>
 
         <main>
             {% if projects %}
                 {% for project in projects %}
-                <section class="project-card">
-                    <div style="display:flex; gap:12px; align-items:baseline; justify-content:space-between;">
-                        <h2>{{ project.name }}</h2>
-                        <div>
-                            <a class="btn" href="/project/{{ project.name }}/live">Live run</a>
-                            <a class="btn" href="/project/{{ project.name }}/mask">Mask editor</a>
-                            <a class="btn" href="/project/{{ project.name }}/rulesui">Rules UI</a>
+                <div class="box" style="margin-bottom: 1.5rem;">
+                    <div class="level">
+                        <div class="level-left">
+                            <div class="level-item">
+                                <h2 class="title is-5">{{ project.name }}</h2>
+                            </div>
+                        </div>
+                        <div class="level-right">
+                            <div class="level-item">
+                                <div class="buttons">
+                                    <a class="button is-light is-small" href="/project/{{ project.name }}/live">
+                                        <span class="icon"><i class="fas fa-play"></i></span>
+                                        <span>Live run</span>
+                                    </a>
+                                    <a class="button is-light is-small" href="/project/{{ project.name }}/mask">
+                                        <span class="icon"><i class="fas fa-draw-polygon"></i></span>
+                                        <span>Mask editor</span>
+                                    </a>
+                                    <a class="button is-light is-small" href="/project/{{ project.name }}/rulesui">
+                                        <span class="icon"><i class="fas fa-list-check"></i></span>
+                                        <span>Rules UI</span>
+                                    </a>
+                                </div>
+                            </div>
                         </div>
                     </div>
-                    <div class="runs-list">
+                    <div class="content">
                         {% for run in project.runs %}
-                        <a href="/project/{{ project.name }}/run/{{ run.id }}" class="run-card">
-                            <div class="run-header">
-                                <span class="run-id">{{ run.id }}</span>
-                                <span class="run-stats">{{ run.iterations }} iterations</span>
-                            </div>
-                            <div class="run-range">
-                                Iterations {{ run.first_iteration }} → {{ run.last_iteration }}
+                        <a href="/project/{{ project.name }}/run/{{ run.id }}" class="box" style="margin-bottom: 0.75rem; display: block; text-decoration: none; transition: all 0.2s;" onmouseover="this.style.boxShadow='0 4px 8px rgba(0,0,0,0.1)'" onmouseout="this.style.boxShadow=''">
+                            <div class="level">
+                                <div class="level-left">
+                                    <div class="level-item">
+                                        <div>
+                                            <span class="is-family-monospace has-text-weight-bold">{{ run.id }}</span>
+                                            <span class="tag is-light ml-2">{{ run.iterations }} iterations</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="level-right">
+                                    <div class="level-item">
+                                        <span class="has-text-grey is-size-7">Iterations {{ run.first_iteration }} → {{ run.last_iteration }}</span>
+                                    </div>
+                                </div>
                             </div>
                         </a>
                         {% endfor %}
                     </div>
-                </section>
+                </div>
                 {% endfor %}
             {% else %}
-                <div class="empty-state">
-                    <p>No projects with runs found.</p>
-                    <p>Run <code>python iterative_imagination.py --project &lt;name&gt;</code> to create iterations.</p>
+                <div class="box has-text-centered">
+                    <p class="has-text-grey">No projects with runs found.</p>
+                    <p class="has-text-grey mt-2">
+                        Run <code>python iterative_imagination.py --project &lt;name&gt;</code> to create iterations.
+                    </p>
                 </div>
             {% endif %}
         </main>

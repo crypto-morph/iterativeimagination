@@ -241,8 +241,8 @@ async function init() {
     notes = (existing.notes && typeof existing.notes === 'object') ? existing.notes : {};
     renderThumbGrid();
 
-    document.getElementById('rankLoading').classList.add('hidden');
-    document.getElementById('rankContent').classList.remove('hidden');
+    document.getElementById('rankLoading').classList.add('is-hidden');
+    document.getElementById('rankContent').classList.remove('is-hidden');
     setStatus(existing.updated_at ? 'Loaded existing ranking' : '', null);
 
     // Notes editor (writes to selected)

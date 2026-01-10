@@ -4,37 +4,77 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Mask Editor - {{ project_name }}</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        body {
+            background: #f5f5f5 !important;
+            padding: 1.5rem;
+        }
+        .mask-canvas-wrap {
+            position: relative;
+            width: 100%;
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid #e5e7eb;
+            background: #111;
+        }
+    </style>
 </head>
 <body>
-    <div class="container">
-        <header>
-            <div style="display:flex; gap:12px; align-items:baseline; justify-content:space-between;">
-                <div>
-                    <h1>Mask editor: {{ project_name }}</h1>
-                    <p>Draw white where you want the model to edit (inpaint). Black keeps the original.</p>
-                </div>
-                <div style="display:flex; gap:10px;">
-                    <a class="btn" href="/project/{{ project_name }}/live">Live run</a>
-                    <a class="btn" href="/">Back</a>
+    <div class="container" style="max-width: 1400px;">
+        <nav class="navbar is-light" style="margin-bottom: 1.5rem;">
+            <div class="navbar-brand">
+                <div class="navbar-item">
+                    <h1 class="title is-4">Mask editor: {{ project_name }}</h1>
                 </div>
             </div>
-        </header>
+            <div class="navbar-menu">
+                <div class="navbar-end">
+                    <div class="navbar-item">
+                        <div class="buttons">
+                            <a class="button is-light" href="/project/{{ project_name }}/live">
+                                <span class="icon"><i class="fas fa-play"></i></span>
+                                <span>Live run</span>
+                            </a>
+                            <a class="button is-light" href="/">
+                                <span class="icon"><i class="fas fa-arrow-left"></i></span>
+                                <span>Back</span>
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </nav>
 
-        <main>
-            <section class="controls-panel">
-                <div class="mask-toolbar">
-                    <label class="muted">Mask:
+        <div class="box" style="margin-bottom: 1.5rem;">
+            <p class="has-text-grey">Draw white where you want the model to edit (inpaint). Black keeps the original.</p>
+        </div>
+
+        <div class="box" style="margin-bottom: 1.5rem;">
+            <div class="field is-grouped is-grouped-multiline">
+                <div class="control">
+                    <label class="label is-size-7">Mask:</label>
+                    <div class="select">
                         <select id="maskSelect"></select>
-                    </label>
-                    <label class="muted">New mask:
-                        <input id="newMaskName" type="text" placeholder="left / middle / right" style="width:160px;">
-                    </label>
-                    <button id="btnCreateMask" class="btn">Create</button>
-                    <label class="muted">Suggest mask:
-                        <input id="suggestText" type="text" placeholder="e.g. left woman, bikini, dress" style="width:240px;">
-                    </label>
-                    <label class="muted">Focus:
+                    </div>
+                </div>
+                <div class="control">
+                    <label class="label is-size-7">New mask:</label>
+                    <input id="newMaskName" class="input" type="text" placeholder="left / middle / right" style="width:160px;">
+                </div>
+                <div class="control">
+                    <label class="label is-size-7">&nbsp;</label>
+                    <button id="btnCreateMask" class="button is-light">Create</button>
+                </div>
+                <div class="control">
+                    <label class="label is-size-7">Suggest mask:</label>
+                    <input id="suggestText" class="input" type="text" placeholder="e.g. left woman, bikini, dress" style="width:240px;">
+                </div>
+                <div class="control">
+                    <label class="label is-size-7">Focus:</label>
+                    <div class="select">
                         <select id="suggestFocus">
                             <option value="auto" selected>auto</option>
                             <option value="left">left</option>
@@ -42,46 +82,79 @@
                             <option value="right">right</option>
                             <option value="none">none</option>
                         </select>
-                    </label>
-                    <button id="btnSuggestMask" class="btn">Suggest</button>
-                    <button id="toolBrush" class="btn active">Brush</button>
-                    <button id="toolEraser" class="btn">Eraser</button>
-                    <label class="muted">Brush size:
-                        <input id="brushSize" type="range" min="3" max="80" value="24">
-                    </label>
-                    <button id="btnClear" class="btn">Clear</button>
-                    <button id="btnFillWhite" class="btn">Fill white</button>
-                    <button id="btnLoad" class="btn">Load existing</button>
-                    <button id="btnSave" class="btn primary">Save mask</button>
-                    <span id="maskStatus" class="muted"></span>
+                    </div>
                 </div>
-            </section>
+                <div class="control">
+                    <label class="label is-size-7">&nbsp;</label>
+                    <button id="btnSuggestMask" class="button is-light">Suggest</button>
+                </div>
+                <div class="control">
+                    <label class="label is-size-7">&nbsp;</label>
+                    <button id="toolBrush" class="button is-light is-active">Brush</button>
+                </div>
+                <div class="control">
+                    <label class="label is-size-7">&nbsp;</label>
+                    <button id="toolEraser" class="button is-light">Eraser</button>
+                </div>
+                <div class="control">
+                    <label class="label is-size-7">Brush size:</label>
+                    <input id="brushSize" class="slider is-fullwidth" type="range" min="3" max="80" value="24" style="width:120px;">
+                </div>
+                <div class="control">
+                    <label class="label is-size-7">&nbsp;</label>
+                    <button id="btnClear" class="button is-light">Clear</button>
+                </div>
+                <div class="control">
+                    <label class="label is-size-7">&nbsp;</label>
+                    <button id="btnFillWhite" class="button is-light">Fill white</button>
+                </div>
+                <div class="control">
+                    <label class="label is-size-7">&nbsp;</label>
+                    <button id="btnLoad" class="button is-light">Load existing</button>
+                </div>
+                <div class="control">
+                    <label class="label is-size-7">&nbsp;</label>
+                    <button id="btnSave" class="button is-primary">Save mask</button>
+                </div>
+            </div>
+            <div id="maskStatus" class="has-text-grey is-size-7 mt-2"></div>
+        </div>
 
-            <section style="margin-top:16px;">
-                <div class="mask-stage">
+        <div class="columns">
+            <div class="column is-8">
+                <div class="box">
                     <div class="mask-canvas-wrap">
                         <img id="baseImg" class="mask-base" src="/api/project/{{ project_name }}/input/image" alt="Input">
                         <canvas id="maskCanvas" class="mask-canvas"></canvas>
-                        <div id="anchorMarker" class="anchor-marker hidden" title="Anchor point"></div>
+                        <div id="anchorMarker" class="anchor-marker is-hidden" title="Anchor point"></div>
                     </div>
-                    <div class="mask-help">
-                        <h3>Tips</h3>
+                </div>
+            </div>
+            <div class="column is-4">
+                <div class="box">
+                    <h3 class="title is-6">Tips</h3>
+                    <div class="content is-size-7">
                         <ul>
                             <li>Mask only the garment area (avoid face/hair/background).</li>
                             <li>Feather the edges a bit (use a larger brush) for smoother blends.</li>
                             <li>Default mask saves to <code>input/mask.png</code>. Named masks save to <code>input/masks/&lt;name&gt;.png</code>.</li>
                             <li><code>Fill white</code> makes the whole image editable (useful for testing, but often better to run without masking for full-frame changes).</li>
-                            <li><strong>Alt+Click</strong> sets an anchor point (x,y) used to disambiguate “which person” for Suggest.</li>
+                            <li><strong>Alt+Click</strong> sets an anchor point (x,y) used to disambiguate "which person" for Suggest.</li>
                         </ul>
-                        <div style="margin-top:10px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-                            <span class="muted">Anchor:</span>
-                            <span id="anchorText" class="muted">none</span>
-                            <button id="btnClearAnchor" class="btn">Clear anchor</button>
+                        <div class="field is-grouped mt-4">
+                            <div class="control">
+                                <span class="has-text-grey">Anchor:</span>
+                                <span id="anchorText" class="has-text-grey ml-2">none</span>
+                            </div>
+                            <div class="control">
+                                <button id="btnClearAnchor" class="button is-small is-light">Clear anchor</button>
+                            </div>
+                            </div>
                         </div>
                     </div>
                 </div>
-            </section>
-        </main>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -91,4 +164,3 @@
     <script src="{{ url_for('static', filename='js/mask.js') }}"></script>
 </body>
 </html>
-
