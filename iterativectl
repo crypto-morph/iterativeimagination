@@ -1070,6 +1070,9 @@ Examples:
     
     elif args.command == 'variants':
         return run_variants(args)
+    
+    elif args.command == 'masks':
+        return run_masks(args)
 
     elif args.command == 'rules':
         if not args.action:
