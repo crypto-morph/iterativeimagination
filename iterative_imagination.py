@@ -1081,16 +1081,9 @@ class IterativeImagination:
         cur_d = float(params.get("denoise", current_denoise) or current_denoise)
         cur_cfg = float(params.get("cfg", current_cfg) or current_cfg)
 
-        if failed_preserve:
-            # Preserve failures: pull closer to original immediately.
-            max_strength = max(_strength_value(criteria_by_field[f].get('edit_strength')) for f in failed_preserve)
-            delta = 0.05 + 0.02 * max_strength
-            params["denoise"] = max(denoise_min, cur_d - delta)
-            params["cfg"] = max(cfg_min, cur_cfg - (0.5 + 0.5 * max_strength))
-            self.logger.info(
-                f"Preserve goals failing ({failed_preserve}) - decreasing denoise to {params['denoise']:.2f}, cfg to {params['cfg']:.1f}"
-            )
-        elif failed_change:
+        # Priority: if we have change failures, prioritize those (increase denoise to make the change happen).
+        # Only reduce denoise for preserve failures if we DON'T have change failures.
+        if failed_change:
             if not mask_used:
                 self.logger.warning(
                     "Change goals are failing but no mask is in use. "
@@ -1109,7 +1102,16 @@ class IterativeImagination:
             cfg_delta = 0.5 + 0.5 * max_strength
             params["cfg"] = min(cfg_max, max(cfg_min, cur_cfg + cfg_delta))
             self.logger.info(
-                f"Change goals failing ({failed_change}) - denoise {params['denoise']:.2f} cfg {params['cfg']:.1f} (caps: denoise<= {denoise_max:.2f}, cfg<= {cfg_max:.1f})"
+                f"Change goals failing ({failed_change}) - increasing denoise to {params['denoise']:.2f}, cfg to {params['cfg']:.1f} (caps: denoise<= {denoise_max:.2f}, cfg<= {cfg_max:.1f})"
+            )
+        elif failed_preserve:
+            # Preserve failures (and no change failures): pull closer to original immediately.
+            max_strength = max(_strength_value(criteria_by_field[f].get('edit_strength')) for f in failed_preserve)
+            delta = 0.05 + 0.02 * max_strength
+            params["denoise"] = max(denoise_min, cur_d - delta)
+            params["cfg"] = max(cfg_min, cur_cfg - (0.5 + 0.5 * max_strength))
+            self.logger.info(
+                f"Preserve goals failing ({failed_preserve}) - decreasing denoise to {params['denoise']:.2f}, cfg to {params['cfg']:.1f}"
             )
 
         # If we diverged too far, pull back regardless.
