@@ -329,6 +329,64 @@ class IterativeImagination:
                 criteria_results[field] = False
         
         evaluation['criteria_results'] = criteria_results
+
+        # Never trust model-provided overall_score: compute deterministically from criteria_results.
+        def _is_pass(cdef: Dict, value) -> bool:
+            ctype = str(cdef.get("type") or "boolean").lower()
+            if ctype == "boolean":
+                return bool(value) is True
+            if ctype in ("number", "integer", "float"):
+                try:
+                    v = float(value)
+                except Exception:
+                    return False
+                try:
+                    mn = float(cdef.get("min")) if cdef.get("min") is not None else None
+                    mx = float(cdef.get("max")) if cdef.get("max") is not None else None
+                except Exception:
+                    mn, mx = None, None
+                if mn is not None and v < mn:
+                    return False
+                if mx is not None and v > mx:
+                    return False
+                return True
+            if ctype == "string":
+                return isinstance(value, str) and value.strip() != ""
+            if ctype == "array":
+                if not isinstance(value, list):
+                    return False
+                try:
+                    mn = int(cdef.get("min")) if cdef.get("min") is not None else None
+                    mx = int(cdef.get("max")) if cdef.get("max") is not None else None
+                except Exception:
+                    mn, mx = None, None
+                if mn is not None and len(value) < mn:
+                    return False
+                if mx is not None and len(value) > mx:
+                    return False
+                return True
+            return False
+
+        passed = []
+        failed = []
+        for cdef in criteria:
+            if not isinstance(cdef, dict):
+                continue
+            field = cdef.get("field")
+            if not field:
+                continue
+            val = criteria_results.get(field)
+            if _is_pass(cdef, val):
+                passed.append(field)
+            else:
+                failed.append(field)
+
+        total = len(passed) + len(failed)
+        overall = int(round((len(passed) / total) * 100)) if total else 0
+        evaluation["overall_score"] = overall
+        evaluation["passed_fields"] = passed
+        evaluation["failed_fields"] = failed
+        evaluation["criteria_total"] = total
         return evaluation
     
     def _run_iteration(self, iteration_num: int) -> Optional[Dict]:
