@@ -444,8 +444,23 @@ def suggest_mask(project_name: str):
             _set("running", "queueing workflow to ComfyUI...")
             prompt_id = client.queue_prompt(workflow)
             _set("running", "running (this can take a while on first use)...", prompt_id=prompt_id)
-            ok = client.wait_for_completion(prompt_id, max_wait=600)
-            if not ok:
+            # NOTE: ComfyUI websocket progress isn't always reliable in some environments.
+            # For mask suggestions, prefer polling history so the UI doesn't appear "stuck"
+            # even if the websocket never reports completion.
+            deadline = time.time() + 600
+            while time.time() < deadline:
+                try:
+                    hist = client.get_history(prompt_id)
+                    rec = hist.get(prompt_id) or {}
+                    outputs = rec.get("outputs") or {}
+                    status = (rec.get("status") or {}).get("status_str")
+                    completed = (rec.get("status") or {}).get("completed")
+                    if outputs or completed or status == "success":
+                        break
+                except Exception:
+                    pass
+                time.sleep(1)
+            else:
                 _set("error", "Timed out waiting for ComfyUI mask generation", error="timeout")
                 return
 
