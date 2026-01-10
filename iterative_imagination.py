@@ -575,8 +575,9 @@ class IterativeImagination:
                         current_cfg = float(params.get("cfg", 7.0))
                         
                         # If denoise/cfg are at default or low values, boost them for inpainting
+                        # For dramatic clothing changes (suit → snowsuit), we need higher denoise
                         if current_denoise < 0.7:
-                            params["denoise"] = 0.75  # Start higher for inpainting
+                            params["denoise"] = 0.85  # Start higher for inpainting (was 0.75, but clothing changes need more)
                             self.logger.info(f"Boosted denoise to {params['denoise']} for inpainting (mask: {active_mask_name or 'default'})")
                         if current_cfg < 9.0:
                             params["cfg"] = 10.0  # Start higher for inpainting
