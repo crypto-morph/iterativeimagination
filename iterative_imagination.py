@@ -1030,6 +1030,20 @@ class IterativeImagination:
             rules_text = "\n".join([_crit_line(c) for c in criteria_defs])
             if self.human_feedback_context:
                 rules_text = rules_text + self.human_feedback_context
+            # Ground the prompt improver to avoid hallucinating an unrelated scene/background.
+            # We include the original description and explicit constraints, but still post-process heavily.
+            try:
+                original_desc = self._describe_original_image()
+            except Exception:
+                original_desc = ""
+            if original_desc:
+                rules_text = (
+                    "ORIGINAL IMAGE DESCRIPTION (authoritative grounding):\n"
+                    + original_desc.strip()
+                    + "\n\nIMPORTANT: Do NOT invent new scene elements or backgrounds not present in the original description.\n"
+                    + "Keep the scene/background consistent unless a change criterion explicitly requires it.\n\n"
+                    + rules_text
+                )
             current_positive = aigen_config.get('prompts', {}).get('positive', '')
             current_negative = aigen_config.get('prompts', {}).get('negative', '')
 
@@ -1091,20 +1105,55 @@ class IterativeImagination:
             ban_terms = _dedupe(ban_terms)
             avoid_terms = _dedupe(avoid_terms)
 
-            def _prune_weird_tokens(s: str, max_chars: int = 90, max_words: int = 10) -> str:
-                """Keep prompts as short tag lists; drop sentence-like fragments."""
+            def _prune_weird_tokens(s: str, max_chars: int = 80, max_words: int = 6) -> str:
+                """Keep prompts as short tag lists; drop sentence-like fragments.
+
+                This is intentionally strict: we want comma-separated tags, not prose.
+                """
                 parts = [p.strip() for p in (s or "").split(",")]
                 out = []
                 for p in parts:
                     if not p:
                         continue
+                    pl = p.lower().strip()
+                    # Drop sentence-y fragments and long clauses
                     # Drop sentence-y fragments and long clauses
                     if any(ch in p for ch in (".", "!", "?", ";", ":")):
+                        continue
+                    # Drop fragments that look like prose / descriptions
+                    if pl.startswith(("a ", "an ", "the ")):
+                        continue
+                    if any(w in pl for w in (" standing", " wearing", " against ", " as in ", " maintaining", " changing", " in the ", " in a ")):
                         continue
                     if len(p) > max_chars:
                         continue
                     if len(p.split()) > max_words:
                         continue
+                    out.append(p)
+                return ", ".join(out).strip(" ,\n")
+
+            def _canonicalise_csv_tags(s: str, max_words: int = 4, max_chars: int = 60) -> str:
+                """Final normalisation pass to enforce tag-like comma-separated tokens."""
+                parts = [p.strip() for p in (s or "").split(",")]
+                out = []
+                seen = set()
+                for p in parts:
+                    if not p:
+                        continue
+                    pl = p.lower().strip()
+                    if any(ch in p for ch in (".", "!", "?", ";", ":")):
+                        continue
+                    if pl.startswith(("a ", "an ", "the ")):
+                        continue
+                    if any(w in pl for w in (" standing", " wearing", " against ", " as in ", " maintaining", " changing", " in the ", " in a ")):
+                        continue
+                    if len(p) > max_chars:
+                        continue
+                    if len(p.split()) > max_words:
+                        continue
+                    if pl in seen:
+                        continue
+                    seen.add(pl)
                     out.append(p)
                 return ", ".join(out).strip(" ,\n")
 
@@ -1233,6 +1282,48 @@ class IterativeImagination:
             improved_negative = re.sub(r"(?i)\\b(no|not|without)\\s+", "", improved_negative).strip(" ,\n")
             improved_positive = _dedupe_csv(improved_positive)
             improved_negative = _dedupe_csv(improved_negative)
+
+            # If we're preserving the background, aggressively remove common scene/background words
+            # that are not present in the original description.
+            try:
+                od = (original_desc or "").lower()
+            except Exception:
+                od = ""
+            preserve_background = any(
+                isinstance(c, dict) and (
+                    str(c.get("field") or "").lower() in ("background_identical", "background")
+                    or "identical background" in ", ".join(_listify(c.get("must_include"))).lower()
+                )
+                for c in criteria_defs
+            )
+            if preserve_background and od:
+                env_words = [
+                    "forest", "jungle", "beach", "desert", "mountain", "snow", "street", "city",
+                    "bedroom", "kitchen", "bathroom", "studio", "office", "conference", "park",
+                ]
+                def _filter_env(s: str) -> str:
+                    parts = [p.strip() for p in (s or "").split(",")]
+                    out = []
+                    for p in parts:
+                        if not p:
+                            continue
+                        pl = p.lower()
+                        if any(w in pl for w in env_words) and not any(w in od for w in env_words if w in pl):
+                            # If token mentions an environment keyword not found in original description, drop it.
+                            # (e.g. "forest backdrop" when original is an office.)
+                            continue
+                        out.append(p)
+                    return ", ".join(out).strip(" ,\n")
+                improved_positive = _filter_env(improved_positive)
+                improved_negative = _filter_env(improved_negative)
+
+            # Final canonicalisation to keep prompts tag-like.
+            improved_positive = _canonicalise_csv_tags(improved_positive)
+            improved_negative = _canonicalise_csv_tags(improved_negative)
+
+            # Keep negatives focused: if we have explicit ban_terms, don't keep extra fluff.
+            if ban_terms:
+                improved_negative = _canonicalise_csv_tags(", ".join(ban_terms + _listify(improved_negative.split(","))))
 
             # Log a concise diff so it's clear what changed iteration-to-iteration.
             try:
