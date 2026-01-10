@@ -37,13 +37,20 @@ class ProjectManager:
         - `input/progress.png` if present (allows multi-pass workflows without overwriting the original input)
         Fallback:
         - `input/input.png`
+        
+        Returns an absolute resolved path.
         """
-        progress_path = self.project_root / "input" / "progress.png"
+        progress_path = (self.project_root / "input" / "progress.png").resolve()
         if progress_path.exists():
             return progress_path
-        input_path = self.project_root / "input" / "input.png"
+        input_path = (self.project_root / "input" / "input.png").resolve()
         if not input_path.exists():
-            raise FileNotFoundError(f"Input image not found: {input_path}")
+            raise FileNotFoundError(
+                f"Input image not found: {input_path}\n"
+                f"Expected one of:\n"
+                f"  - {self.project_root / 'input' / 'progress.png'}\n"
+                f"  - {self.project_root / 'input' / 'input.png'}"
+            )
         return input_path
     
     def ensure_directories(self):
@@ -218,6 +225,18 @@ class ProjectManager:
     
     def prepare_input_image(self, input_image_path: Path, comfyui_input_dir: Path) -> str:
         """Copy input image to ComfyUI input directory and return filename."""
+        # Resolve path to absolute to avoid issues with relative paths
+        input_image_path = input_image_path.resolve()
+        
+        # Verify the file exists
+        if not input_image_path.exists():
+            raise FileNotFoundError(
+                f"Input image not found: {input_image_path}\n"
+                f"Expected one of:\n"
+                f"  - {self.project_root / 'input' / 'progress.png'}\n"
+                f"  - {self.project_root / 'input' / 'input.png'}"
+            )
+        
         # Generate a unique filename to avoid conflicts.
         #
         # IMPORTANT: We may copy multiple files in the same second (e.g. input.png + mask.png),
@@ -225,7 +244,7 @@ class ProjectManager:
         stamp = time.time_ns()
         stem = (input_image_path.stem or "input").replace(" ", "_")
         filename = f"iterative_imagination_{self.project_name}_{stem}_{stamp}.png"
-        comfyui_input_path = comfyui_input_dir / filename
+        comfyui_input_path = comfyui_input_dir.resolve() / filename
         
         # Copy image
         shutil.copy2(input_image_path, comfyui_input_path)
