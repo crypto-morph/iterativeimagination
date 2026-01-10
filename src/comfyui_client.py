@@ -30,10 +30,33 @@ class ComfyUIClient:
         return response.json()['prompt_id']
     
     def get_history(self, prompt_id: str) -> Dict:
-        """Get execution history for a prompt ID."""
-        response = requests.get(f"{self.base_url}/history/{prompt_id}", timeout=30)
-        response.raise_for_status()
-        return response.json()
+        """Get execution history for a prompt ID.
+        
+        ComfyUI history API returns:
+        - /history/{prompt_id} - returns {prompt_id: {status, outputs, ...}} or {} if not found
+        - /history - returns all history {prompt_id: {...}, ...}
+        """
+        # Try specific prompt_id first
+        try:
+            response = requests.get(f"{self.base_url}/history/{prompt_id}", timeout=30)
+            response.raise_for_status()
+            data = response.json()
+            # If we get a dict with our prompt_id, return it
+            if isinstance(data, dict) and prompt_id in data:
+                return data
+            # If we get an empty dict or different format, try full history
+            if not data or not isinstance(data, dict):
+                response = requests.get(f"{self.base_url}/history", timeout=30)
+                response.raise_for_status()
+                all_history = response.json()
+                if isinstance(all_history, dict) and prompt_id in all_history:
+                    return {prompt_id: all_history[prompt_id]}
+            return data
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 404:
+                # Prompt not found yet, return empty dict
+                return {}
+            raise
     
     def download_image(self, filename: str, subfolder: str = "", folder_type: str = "output") -> bytes:
         """Download an image from ComfyUI."""

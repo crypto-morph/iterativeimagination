@@ -656,28 +656,82 @@ class IterativeImagination:
         # Get result
         self.logger.info("Fetching result...")
         image_info = None
+        last_error = None
         for attempt in range(8):
             try:
                 time.sleep(1 if attempt > 0 else 0.5)
                 history = self.comfyui.get_history(prompt_id)
                 
-                if prompt_id in history:
-                    execution = history[prompt_id]
-                    outputs = execution.get('outputs', {})
-                    
-                    if outputs:
-                        for node_id, node_output in outputs.items():
-                            if 'images' in node_output and len(node_output['images']) > 0:
-                                image_info = node_output['images'][0]
-                                break
-                        if image_info:
+                # ComfyUI history API returns {prompt_id: {...}}}
+                # But sometimes it's just the prompt_id directly
+                if isinstance(history, dict):
+                    if prompt_id in history:
+                        execution = history[prompt_id]
+                    elif len(history) == 1:
+                        # Sometimes it's wrapped differently
+                        execution = list(history.values())[0]
+                    else:
+                        # Try to find any entry that looks like our execution
+                        execution = history
+                else:
+                    execution = history
+                
+                if not isinstance(execution, dict):
+                    last_error = f"Unexpected history format: {type(execution)}"
+                    continue
+                
+                # Check for status/error first
+                status = execution.get('status', {})
+                if isinstance(status, dict):
+                    if status.get('completed', False) is False:
+                        if status.get('error'):
+                            last_error = f"Workflow error: {status.get('error')}"
+                            self.logger.error(last_error)
+                            return None
+                        # Still running, continue waiting
+                        continue
+                
+                outputs = execution.get('outputs', {})
+                
+                if not outputs:
+                    # Check if it's in a different format
+                    if 'images' in execution:
+                        # Direct images array
+                        if len(execution['images']) > 0:
+                            image_info = execution['images'][0]
                             break
-            except Exception:
+                    last_error = f"No outputs found in execution. Keys: {list(execution.keys())}"
+                    continue
+                
+                # Look for SaveImage node outputs
+                for node_id, node_output in outputs.items():
+                    if not isinstance(node_output, dict):
+                        continue
+                    if 'images' in node_output and len(node_output['images']) > 0:
+                        image_info = node_output['images'][0]
+                        self.logger.info(f"Found image in node {node_id}: {image_info.get('filename', 'unknown')}")
+                        break
+                
+                if image_info:
+                    break
+                    
+            except Exception as e:
+                last_error = f"Exception fetching history: {e}"
+                self.logger.debug(f"Attempt {attempt + 1} failed: {last_error}")
                 if attempt < 7:
                     continue
         
         if not image_info:
-            self.logger.error("No image found in workflow outputs")
+            error_msg = f"No image found in workflow outputs"
+            if last_error:
+                error_msg += f" (last error: {last_error})"
+            self.logger.error(error_msg)
+            # Try to get more debug info
+            try:
+                history = self.comfyui.get_history(prompt_id)
+                self.logger.debug(f"History response: {json.dumps(history, indent=2)[:500]}")
+            except Exception as e:
+                self.logger.debug(f"Could not fetch history for debugging: {e}")
             return None
         
         # Download and save image
