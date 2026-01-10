@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Run - {{ project_name }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div style="display:flex; gap:12px; align-items:baseline; justify-content:space-between;">
+                <div>
+                    <h1>Live Run: {{ project_name }}</h1>
+                    <p>One iteration at a time, with human feedback between iterations.</p>
+                </div>
+                <div>
+                    <a class="btn" href="/">Back</a>
+                </div>
+            </div>
+        </header>
+
+        <main>
+            <section class="controls-panel">
+                <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+                    <button id="startBtn" class="btn primary">Start live run</button>
+                    <label style="display:flex; gap:8px; align-items:center;">
+                        <input id="resetChk" type="checkbox">
+                        Reset checkpoint
+                    </label>
+                    <label style="display:flex; gap:8px; align-items:center;">
+                        Max iterations:
+                        <input id="maxIter" type="number" min="1" max="50" value="20" style="width:80px;">
+                    </label>
+                    <span id="statusText" class="muted"></span>
+                </div>
+            </section>
+
+            <section class="rules-editor" style="margin-top:16px;">
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+                    <h3 style="margin:0;">Rules editor (`config/rules.yaml`)</h3>
+                    <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                        <button id="loadRulesBtn" class="btn">Load rules</button>
+                        <button id="saveRulesBtn" class="btn primary" disabled>Save rules</button>
+                    </div>
+                </div>
+                <div id="rulesStatus" class="muted" style="margin-top:8px;"></div>
+                <textarea id="rulesBox" class="code-textarea" placeholder="Click 'Load rules' to edit..."></textarea>
+                <div id="rulesLint" class="lint-box hidden"></div>
+                <div class="muted" style="margin-top:8px;">
+                    Saving creates a backup alongside the file: <code>rules.yaml.bak.&lt;timestamp&gt;</code>.
+                    Live runs re-load rules before each iteration.
+                </div>
+            </section>
+
+            <div id="turnBanner" class="turn-banner hidden">
+                <div class="turn-banner-inner">
+                    <strong>Your turn:</strong> add a comment / nudges, then click <em>Submit feedback and continue</em>.
+                </div>
+            </div>
+
+            <section class="compare-panel" style="margin-top:16px;">
+                <div class="compare-grid">
+                    <div class="compare-item">
+                        <h3>Original</h3>
+                        <img id="origImg" class="compare-image" src="/api/project/{{ project_name }}/input/image" alt="Original">
+                    </div>
+                    <div class="compare-item">
+                        <h3>Latest</h3>
+                        <div id="spinnerOverlay" class="spinner-overlay hidden" aria-hidden="true">
+                            <div class="spinner" aria-hidden="true"></div>
+                            <div class="spinner-text">Generating next iteration…</div>
+                        </div>
+                        <img id="latestImg" class="compare-image" src="" alt="Latest (will appear after iteration 1)">
+                        <div id="latestMeta" class="meta-box"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="feedbackPanel" class="feedback-panel" style="margin-top:16px;">
+                <h3>Your feedback (used for the next iteration)</h3>
+                <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
+                    <button id="btnLessRandom" class="btn">Less random</button>
+                    <button id="btnTooSimilar" class="btn">Too similar</button>
+                    <span class="muted">These nudge the next iteration gently by adjusting denoise/CFG.</span>
+                </div>
+                <textarea id="commentBox" placeholder="Type a comment, e.g. 'Keep the pose, improve lighting, remove green clothing, more realistic skin texture'"></textarea>
+                <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+                    <button id="submitFeedbackBtn" class="btn primary" disabled>Submit feedback and continue</button>
+                    <span id="feedbackHint" class="muted"></span>
+                </div>
+            </section>
+
+            <section style="margin-top:18px;">
+                <h3>All iterations (latest at top)</h3>
+                <div id="iterationsList" class="iterations-list"></div>
+            </section>
+        </main>
+    </div>
+
+    <script>
+        window.__LIVE_PROJECT__ = "{{ project_name }}";
+    </script>
+    <script src="{{ url_for('static', filename='js/live.js') }}"></script>
+</body>
+</html>
+

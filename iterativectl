@@ -6,6 +6,8 @@ Commands:
   comfyui start|stop|restart|status  - Manage ComfyUI server
   project create <name>              - Create a new project from defaults
   rules check|suggest                - Lint and AI-suggest acceptance_criteria tags in rules.yaml
+  run                               - Run iterative_imagination.py (start/reset/resume)
+  viewer start|stop|status           - Manage the local viewer web app
 """
 
 import argparse
@@ -17,6 +19,9 @@ import socket
 import time
 import signal
 import yaml
+import json
+import urllib.request
+import urllib.error
 from pathlib import Path
 
 
@@ -57,8 +62,8 @@ def find_comfyui_dir():
 COMFYUI_DIR = find_comfyui_dir()
 
 
-def check_comfyui_running(host="localhost", port=8188):
-    """Check if ComfyUI is running by testing the port."""
+def check_port_open(host="localhost", port=8188):
+    """Check if a TCP port is open."""
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(1)
@@ -67,6 +72,11 @@ def check_comfyui_running(host="localhost", port=8188):
         return result == 0
     except Exception:
         return False
+
+
+def check_comfyui_running(host="localhost", port=8188):
+    """Check if ComfyUI is running by testing the port."""
+    return check_port_open(host=host, port=port)
 
 
 def get_comfyui_pid():
@@ -357,6 +367,10 @@ def rules_run(args):
             cmd += ["--guidelines", args.guidelines]
         if getattr(args, "no_guidelines", False):
             cmd += ["--no-guidelines"]
+        if getattr(args, "human_feedback_run", None):
+            cmd += ["--human-feedback-run", str(args.human_feedback_run)]
+        if getattr(args, "human_feedback_top_k", None) is not None:
+            cmd += ["--human-feedback-top-k", str(args.human_feedback_top_k)]
         if args.json:
             cmd += ["--json"]
     else:
@@ -370,6 +384,322 @@ def rules_run(args):
         return 1
 
 
+def run_imagination(args):
+    """Run iterative_imagination.py using the ComfyUI venv python if available."""
+    script_path = SCRIPT_DIR / "iterative_imagination.py"
+    if not script_path.exists():
+        print(f"✗ iterative_imagination.py not found: {script_path}")
+        return 1
+
+    # Prefer the ComfyUI venv python if available, so dependencies are present
+    venv_python = COMFYUI_DIR / "venv" / "bin" / "python"
+    python_cmd = str(venv_python) if venv_python.exists() else sys.executable
+
+    cmd = [python_cmd, str(script_path)]
+
+    if args.project:
+        cmd += ["--project", args.project]
+    if args.rules:
+        cmd += ["--rules", args.rules]
+    if args.input:
+        cmd += ["--input", args.input]
+
+    if args.reset:
+        cmd += ["--reset"]
+    if args.resume_from is not None:
+        cmd += ["--resume-from", str(args.resume_from)]
+    if getattr(args, "seed_from_ranking", None):
+        cmd += ["--seed-from-ranking", str(args.seed_from_ranking)]
+    if getattr(args, "seed_ranking_mode", None):
+        cmd += ["--seed-ranking-mode", str(args.seed_ranking_mode)]
+    # Backwards compatible alias
+    if getattr(args, "seed_from_human", None):
+        cmd += ["--seed-from-human", str(args.seed_from_human)]
+    if args.dry_run:
+        cmd += ["--dry-run"]
+    if args.verbose:
+        cmd += ["--verbose"]
+
+    try:
+        return subprocess.call(cmd, cwd=str(SCRIPT_DIR))
+    except Exception as e:
+        print(f"✗ Error running iterative_imagination.py: {e}")
+        return 1
+
+
+def _read_pid_file(pid_path: Path) -> int:
+    try:
+        if pid_path.exists():
+            txt = pid_path.read_text(encoding="utf-8").strip()
+            return int(txt)
+    except Exception:
+        return 0
+    return 0
+
+
+def _pid_is_running(pid: int) -> bool:
+    try:
+        if pid <= 0:
+            return False
+        os.kill(pid, 0)
+        return True
+    except Exception:
+        return False
+
+
+def viewer_status(host: str = "localhost", port: int = 5000) -> int:
+    """Check and display viewer status."""
+    viewer_dir = SCRIPT_DIR / "viewer"
+    pid_file = viewer_dir / ".viewer.pid"
+    pid = _read_pid_file(pid_file)
+    is_running = check_port_open(host=host, port=port)
+    if is_running:
+        extra = f", PID: {pid}" if _pid_is_running(pid) else ""
+        print(f"✓ Viewer is running on http://{host}:{port}{extra}")
+        return 0
+    if _pid_is_running(pid):
+        print(f"⚠ Viewer process found (PID: {pid}) but port {port} is not responding")
+        return 1
+    print("✗ Viewer is not running")
+    return 1
+
+
+def viewer_start(host: str = "127.0.0.1", port: int = 5000) -> int:
+    """Start the viewer web app."""
+    viewer_dir = SCRIPT_DIR / "viewer"
+    app_py = viewer_dir / "app.py"
+    if not app_py.exists():
+        print(f"✗ Viewer app not found: {app_py}")
+        return 1
+
+    if check_port_open(host=host, port=port) or check_port_open(host="localhost", port=port):
+        print(f"✓ Viewer is already running on http://{host}:{port}")
+        return 0
+
+    # Prefer the ComfyUI venv python if available, so Flask/PyYAML are present.
+    venv_python = COMFYUI_DIR / "venv" / "bin" / "python"
+    python_cmd = str(venv_python) if venv_python.exists() else sys.executable
+
+    log_file = viewer_dir / "viewer.log"
+    pid_file = viewer_dir / ".viewer.pid"
+
+    print("Starting viewer...")
+    try:
+        with open(log_file, "w") as log:
+            process = subprocess.Popen(
+                [python_cmd, "app.py"],
+                cwd=str(viewer_dir),
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+        pid_file.write_text(str(process.pid), encoding="utf-8")
+
+        # Wait briefly for port to open
+        print("  Waiting for viewer to initialise...")
+        max_wait = 10
+        waited = 0
+        while waited < max_wait:
+            time.sleep(1)
+            waited += 1
+            if check_port_open(host="localhost", port=port) or check_port_open(host=host, port=port):
+                print(f"✓ Viewer started successfully (PID: {process.pid})")
+                print(f"  Access at: http://localhost:{port}")
+                print(f"  Logs: {log_file}")
+                return 0
+
+        print("⚠ Viewer started but port is not responding yet")
+        print(f"  Logs: {log_file}")
+        return 1
+    except Exception as e:
+        print(f"✗ Error starting viewer: {e}")
+        return 1
+
+
+def viewer_stop(port: int = 5000) -> int:
+    """Stop the viewer web app."""
+    viewer_dir = SCRIPT_DIR / "viewer"
+    pid_file = viewer_dir / ".viewer.pid"
+    pid = _read_pid_file(pid_file)
+
+    if not pid or not _pid_is_running(pid):
+        if check_port_open(host="localhost", port=port):
+            print("⚠ Viewer port is open but PID file/process not found")
+            print("  You may need to stop it manually")
+            return 1
+        print("✓ Viewer is not running")
+        return 0
+
+    print(f"Stopping viewer (PID: {pid})...")
+    try:
+        os.kill(pid, signal.SIGTERM)
+        for _ in range(10):
+            time.sleep(0.5)
+            if not _pid_is_running(pid):
+                try:
+                    pid_file.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                print("✓ Viewer stopped successfully")
+                return 0
+
+        print("⚠ Force killing viewer...")
+        os.kill(pid, signal.SIGKILL)
+        time.sleep(0.5)
+        try:
+            pid_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+        if not check_port_open(host="localhost", port=port):
+            print("✓ Viewer stopped")
+            return 0
+        print("✗ Failed to stop viewer")
+        return 1
+    except ProcessLookupError:
+        try:
+            pid_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+        print("✓ Viewer process not found (already stopped)")
+        return 0
+    except Exception as e:
+        print(f"✗ Error stopping viewer: {e}")
+        return 1
+
+
+def _http_get_json(url: str, headers: dict | None = None, timeout: int = 5):
+    req = urllib.request.Request(url, headers=headers or {}, method="GET")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        body = resp.read().decode("utf-8", errors="replace")
+        return resp.status, json.loads(body) if body else None
+
+
+def _doctor_check(name: str, ok: bool, detail: str = "") -> None:
+    if ok:
+        print(f"✓ {name}" + (f" - {detail}" if detail else ""))
+    else:
+        print(f"✗ {name}" + (f" - {detail}" if detail else ""))
+
+
+def doctor(project: str | None = None) -> int:
+    """Run environment and (optionally) project health checks."""
+    exit_code = 0
+    print("Iterative Imagination doctor")
+    print()
+
+    # Python environment
+    venv_python = COMFYUI_DIR / "venv" / "bin" / "python"
+    python_cmd = str(venv_python) if venv_python.exists() else sys.executable
+    _doctor_check("ComfyUI venv python", venv_python.exists(), str(venv_python) if venv_python.exists() else "not found")
+
+    # Dependency sanity (only checks importability)
+    try:
+        subprocess.check_output(
+            [python_cmd, "-c", "import yaml, requests, websocket; from PIL import Image; print('ok')"],
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=10,
+        )
+        _doctor_check("Python deps (PyYAML/requests/websocket-client/Pillow)", True)
+    except Exception as e:
+        _doctor_check("Python deps (PyYAML/requests/websocket-client/Pillow)", False, "missing or not in selected python env")
+        exit_code = 1
+
+    print()
+
+    # ComfyUI install + service
+    _doctor_check("ComfyUI directory", (COMFYUI_DIR / "main.py").exists(), str(COMFYUI_DIR))
+    comfyui_ok = check_comfyui_running()
+    _doctor_check("ComfyUI running (localhost:8188)", comfyui_ok, "http://localhost:8188" if comfyui_ok else "start with: iterativectl comfyui start")
+    if not comfyui_ok:
+        exit_code = 1
+
+    # Viewer service
+    viewer_ok = check_port_open(host="localhost", port=5000)
+    _doctor_check("Viewer running (localhost:5000)", viewer_ok, "http://localhost:5000" if viewer_ok else "start with: iterativectl viewer start")
+
+    print()
+
+    # Ollama service
+    ollama_port = check_port_open(host="localhost", port=11434)
+    _doctor_check("Ollama port (localhost:11434)", ollama_port)
+    if ollama_port:
+        try:
+            status, tags = _http_get_json("http://localhost:11434/api/tags", timeout=5)
+            models = [m.get("name") for m in (tags or {}).get("models", []) if isinstance(m, dict)]
+            _doctor_check("Ollama /api/tags", status == 200, f"models: {', '.join(models[:6])}" if models else "ok")
+        except Exception as e:
+            _doctor_check("Ollama /api/tags", False, "unreachable or invalid response")
+            exit_code = 1
+    else:
+        exit_code = 1
+
+    # OpenRouter key presence (we only check env var here; project config may also embed api_key)
+    openrouter_key = os.environ.get("OPENROUTER_API_KEY")
+    _doctor_check("OPENROUTER_API_KEY set", bool(openrouter_key), "set in env or ~/.bashrc")
+
+    print()
+
+    if project:
+        proj_dir = PROJECTS_DIR / project
+        _doctor_check(f"Project exists ({project})", proj_dir.exists(), str(proj_dir))
+        if not proj_dir.exists():
+            return 1
+
+        rules_path = proj_dir / "config" / "rules.yaml"
+        aigen_path = proj_dir / "config" / "AIGen.yaml"
+        aivis_path = proj_dir / "config" / "AIVis.yaml"
+        input_path = proj_dir / "input" / "input.png"
+
+        _doctor_check("rules.yaml", rules_path.exists(), str(rules_path))
+        _doctor_check("AIGen.yaml", aigen_path.exists(), str(aigen_path))
+        _doctor_check("AIVis.yaml", aivis_path.exists(), str(aivis_path))
+        _doctor_check("input.png", input_path.exists(), str(input_path))
+
+        # Validate workflow_file path
+        try:
+            if aigen_path.exists():
+                with open(aigen_path, "r", encoding="utf-8") as f:
+                    aigen = yaml.safe_load(f) or {}
+                wf = aigen.get("workflow_file")
+                if wf:
+                    if str(wf).startswith("/"):
+                        wf_path = Path(wf)
+                        ok = wf_path.exists()
+                        _doctor_check("workflow_file exists", ok, str(wf_path))
+                    else:
+                        # Try project-relative then repo-root-relative
+                        wf_path_proj = (proj_dir / wf).resolve()
+                        wf_path_repo = (SCRIPT_DIR / wf).resolve()
+                        ok = wf_path_proj.exists() or wf_path_repo.exists()
+                        detail = str(wf_path_proj if wf_path_proj.exists() else wf_path_repo)
+                        _doctor_check("workflow_file exists", ok, detail)
+                else:
+                    _doctor_check("workflow_file set", False, "missing workflow_file in AIGen.yaml")
+                    exit_code = 1
+        except Exception:
+            _doctor_check("AIGen.yaml parse", False, "invalid YAML")
+            exit_code = 1
+
+        # Validate AIVis provider/model selection
+        try:
+            if aivis_path.exists():
+                with open(aivis_path, "r", encoding="utf-8") as f:
+                    aivis = yaml.safe_load(f) or {}
+                provider = (aivis.get("provider") or "ollama").lower()
+                model = aivis.get("model")
+                _doctor_check("AIVis provider", provider in ("ollama", "openrouter"), provider)
+                _doctor_check("AIVis model set", bool(model), str(model) if model else "missing model")
+                if provider == "openrouter" and not (aivis.get("api_key") or openrouter_key):
+                    _doctor_check("OpenRouter API key (project/env)", False, "provider=openrouter but no key available")
+                    exit_code = 1
+        except Exception:
+            _doctor_check("AIVis.yaml parse", False, "invalid YAML")
+            exit_code = 1
+
+    return exit_code
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Management tool for Iterative Imagination projects",
@@ -378,7 +708,16 @@ def main():
 Examples:
   iterativectl comfyui start          # Start ComfyUI server
   iterativectl comfyui status         # Check ComfyUI status
+  iterativectl viewer start           # Start the viewer web app (http://localhost:5000)
+  iterativectl viewer status          # Check viewer status
+  iterativectl doctor                 # Check environment health (ComfyUI/Ollama/etc.)
+  iterativectl doctor --project myproj  # Also check project config and input image
   iterativectl project create myproj  # Create new project 'myproj'
+  iterativectl run --project myproj --reset      # Start a fresh run (archives old artefacts)
+  iterativectl run --project myproj              # Continue from checkpoint if present, else start at 1
+  iterativectl run --project myproj --resume-from 3  # Resume explicitly from iteration 3
+  iterativectl run --project myproj --seed-from-ranking latest --seed-ranking-mode rank1  # Seed from #1 human-ranked image
+  iterativectl run --project myproj --seed-from-ranking latest --seed-ranking-mode top3   # Average top 3 params, use rank1 prompts
   iterativectl rules check --project myproj
   iterativectl rules suggest --project myproj --apply
         """
@@ -394,6 +733,13 @@ Examples:
     comfyui_subparsers.add_parser('stop', help='Stop ComfyUI server')
     comfyui_subparsers.add_parser('restart', help='Restart ComfyUI server')
     comfyui_subparsers.add_parser('status', help='Check ComfyUI status')
+
+    # Viewer commands
+    viewer_parser = subparsers.add_parser('viewer', help='Manage the viewer web app')
+    viewer_subparsers = viewer_parser.add_subparsers(dest='action', help='Action')
+    viewer_subparsers.add_parser('start', help='Start viewer web app (http://localhost:5000)')
+    viewer_subparsers.add_parser('stop', help='Stop viewer web app')
+    viewer_subparsers.add_parser('status', help='Check viewer status')
     
     # Project commands
     project_parser = subparsers.add_parser('project', help='Manage projects')
@@ -401,6 +747,23 @@ Examples:
     
     create_parser = project_subparsers.add_parser('create', help='Create a new project')
     create_parser.add_argument('name', help='Project name')
+
+    # Doctor command
+    doctor_parser = subparsers.add_parser('doctor', help='Environment and project health checks')
+    doctor_parser.add_argument('--project', help='Optional project name to validate configs and input')
+
+    # Run command (iterative_imagination.py)
+    run_parser = subparsers.add_parser('run', help='Run iterative_imagination.py for a project (start/reset/resume)')
+    run_parser.add_argument('--project', type=str, required=True, help='Project name (uses projects/<name>/config/rules.yaml)')
+    run_parser.add_argument('--rules', type=str, help='Path to rules.yaml (alternative to --project)')
+    run_parser.add_argument('--input', type=str, help='Path to input image (alternative to project input/input.png)')
+    run_parser.add_argument('--reset', action='store_true', help='Reset run state (clears checkpoint and archives old run artefacts)')
+    run_parser.add_argument('--resume-from', dest='resume_from', type=int, help='Resume from a specific iteration number')
+    run_parser.add_argument('--seed-from-ranking', dest='seed_from_ranking', type=str, help='Seed from a prior run human ranking (RUN_ID or \"latest\")')
+    run_parser.add_argument('--seed-ranking-mode', dest='seed_ranking_mode', type=str, default='rank1', help='Seeding mode: rank1|top3|top5 (default: rank1)')
+    run_parser.add_argument('--seed-from-human', dest='seed_from_human', type=str, help='(deprecated) alias for --seed-from-ranking')
+    run_parser.add_argument('--dry-run', dest='dry_run', action='store_true', help='Validate configs but do not run')
+    run_parser.add_argument('--verbose', action='store_true', help='Enable debug logging')
 
     # Rules commands
     rules_parser = subparsers.add_parser('rules', help='Lint and AI-suggest tags for rules.yaml')
@@ -422,6 +785,8 @@ Examples:
     rules_suggest_parser.add_argument('--no-general-notes', dest='no_general_notes', action='store_true', help='Do not print AI general_notes (useful for restricted projects)')
     rules_suggest_parser.add_argument('--guidelines', help='Path to guidelines markdown file to send to AIVis')
     rules_suggest_parser.add_argument('--no-guidelines', dest='no_guidelines', action='store_true', help='Send no guidelines to AIVis')
+    rules_suggest_parser.add_argument('--human-feedback-run', dest='human_feedback_run', help="Include human ranking notes from working/<run_id>/human/ranking.json (RUN_ID or 'latest')")
+    rules_suggest_parser.add_argument('--human-feedback-top-k', dest='human_feedback_top_k', type=int, default=3, help='When including human feedback, include notes from top K ranked iterations (default: 3)')
     rules_suggest_parser.add_argument('--json', action='store_true', help='Emit raw suggestions JSON')
     
     args = parser.parse_args()
@@ -449,6 +814,23 @@ Examples:
         else:
             project_parser.print_help()
             return 1
+
+    elif args.command == 'viewer':
+        if args.action == 'start':
+            return viewer_start()
+        elif args.action == 'stop':
+            return viewer_stop()
+        elif args.action == 'status':
+            return viewer_status()
+        else:
+            viewer_parser.print_help()
+            return 1
+
+    elif args.command == 'doctor':
+        return doctor(project=getattr(args, "project", None))
+
+    elif args.command == 'run':
+        return run_imagination(args)
 
     elif args.command == 'rules':
         if not args.action:

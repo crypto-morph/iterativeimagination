@@ -1,6 +1,6 @@
 # Iterative Imagination
 
-This tool will use AI vision (qwen3-vl:4b) and AI Image Generation (ComfyUI) to generate images from a source image with particular attributes
+This tool uses **AI vision (AIVis)** and **AI image generation (AIGen via ComfyUI)** to iteratively transform an input image until a rules file’s acceptance criteria are met (or a maximum iteration count is reached).
 
 ## Legacy
 
@@ -12,42 +12,54 @@ ComfyScripts/archive2 - ComfyUI interator
 
 ## What this tool should do
 
-The inputs are a rules file and an image - default input.png
-The output will be a new image which conforms to the rule file - default output.png
-The rules.yaml will dictate what the AI is aiming to do with the picture
-The AIGen.yaml will allow AI to control the ComfyUI system
-The workflow ComfyUI will use is based on workflow/img2img_no_mask_api.json - but with parameterisation - so that AIGen.yaml controls it. 
+The inputs are a `rules.yaml` file and an image (default `input.png`).
+
+The output is a new image which conforms to the rules (default `output.png`), plus metadata describing how it was produced.
+
+- `rules.yaml`: what the tool is trying to achieve, and how success is evaluated
+- `AIGen.yaml`: how ComfyUI is driven (workflow + generation parameters + prompts)
+- `AIVis.yaml`: which vision provider/model to use (OpenRouter or Ollama), including fallbacks
+- ComfyUI workflow: based on `workflow/img2img_no_mask_api.json`, parameterised by `AIGen.yaml`
 
 ## Terms
 
-The vision component - initially selected as qwen3-vl:4b will be referred to as "AIVis".
-The generation component - initially selected as realisticVisionV60B1_v51VAE.safetensors + ComfyUI will be referred to as "AIGen". 
+- AIVis: the vision component (provider/model configurable; e.g. OpenRouter Qwen-VL or local Ollama models)
+- AIGen: the generation component (ComfyUI + a checkpoint model + an img2img workflow)
 
 ## Where will it store things?
 
 Projects are stored in a `projects/` directory, with each project being self-contained:
 
 **Project Structure** (`projects/{projectname}/`):
-   - `config/rules.yaml` - Project-specific rules and acceptance criteria
-   - `input/input.png` - Input image for the project
-   - `working/` - Generated images and metadata for each iteration
-     - `AIGen.yaml` - Current ComfyUI settings (updated each iteration by AI)
-     - `iteration_{N}.png` - Generated images
-     - `iteration_{N}_questions.json` - Question answers
-     - `iteration_{N}_evaluation.json` - Acceptance criteria evaluation
-     - `iteration_{N}_comparison.json` - Image comparison results
-     - `iteration_{N}_metadata.json` - Complete iteration data
-   - `logs/app.log` - Application logs
-   - `output/` - Final output image and metadata
-     - `output.png` - Final generated image
-     - `output_metadata.json` - Final metadata
+   - `config/rules.yaml`: project rules and acceptance criteria
+   - `config/AIGen.yaml`: starting AIGen configuration (copied into working state)
+   - `config/AIVis.yaml`: AIVis provider/model selection (OpenRouter or Ollama)
+   - `config/prompts.yaml` (optional): per-project LLM prompt overrides
+   - `config/rules_guidelines.md` (optional): per-project rules-suggestion guidelines
+   - `input/input.png`: input image for the project
+   - `working/`: working state and run artefacts
+     - `AIGen.yaml`: current generation config (updated each iteration)
+     - `checkpoint.json`: resume state (last/best iteration, run id, etc.)
+     - `{run_id}/`: per-run artefacts grouped by timestamp (e.g. `2026-01-09_22-25-59/`)
+       - `images/iteration_{N}.png`
+       - `questions/iteration_{N}_questions.json`
+       - `evaluation/iteration_{N}_evaluation.json`
+       - `comparison/iteration_{N}_comparison.json`
+       - `metadata/iteration_{N}_metadata.json`
+       - `human/ranking.json` (optional): human ranking and notes captured in the viewer
+   - `logs/app.log`: application logs
+   - `output/`:
+     - `output.png`: final image (best iteration)
+     - `output_metadata.json`: final metadata
 
 **Defaults** (`defaults/`):
    - `config/rules.yaml` - Template rules file
    - `config/AIGen.yaml` - Template AIGen configuration
+   - `config/AIVis.yaml` - Template AIVis configuration
    - `input/example.jpg` - Example input image
    - `workflow/img2img_no_mask_api.json` - Workflow template
    - `working/` - Empty directory (for AIGen.yaml updates during iterations)
+   - `prompts.yaml` - Default LLM prompts used by AIVis (can be overridden per project)
 
 **Creating a New Project**: Copy `defaults/` to `projects/{projectname}/` and customize:
    - Edit `projects/{projectname}/config/rules.yaml` for project-specific rules
@@ -69,6 +81,8 @@ The rules.yaml file will contain:
 project:
   name: string          # Used for project directory name
   max_iterations: int   # Maximum number of iterations to attempt
+  # Optional: suppress printing model-provided general notes from rules suggestion output
+  # disable_general_notes: true
 
 acceptance_criteria:
   - field: string      # Unique identifier
@@ -76,6 +90,12 @@ acceptance_criteria:
     type: boolean       # Type of answer expected
     min: 0              # Minimum value (for boolean: 0 = false, 1 = true)
     max: 1              # Maximum value
+    # Tags used for data-driven prompt shaping and tuning:
+    intent: change|preserve
+    edit_strength: low|medium|high
+    must_include: [string]
+    ban_terms: [string]
+    avoid_terms: [string]
 
 questions:
   - field: string      # Unique identifier
@@ -106,6 +126,19 @@ prompts:
   positive: string              # Positive prompt text
   negative: string              # Negative prompt text
 ```
+
+**AIVis.yaml Structure**:
+```yaml
+provider: "openrouter" | "ollama"
+model: string
+fallback_provider: "openrouter" | "ollama"
+fallback_model: string
+# api_key: ""                   # optional, otherwise use OPENROUTER_API_KEY
+# max_concurrent: 1             # optional (Ollama is typically 1)
+```
+
+**prompts.yaml**:
+All LLM prompts live in `prompts.yaml` (repo root) and `defaults/prompts.yaml`. A project can override any subset by adding `projects/<name>/config/prompts.yaml`. Missing keys are merged from defaults so older project prompt files do not break.
 
 **Iteration Metadata JSON**:
 ```json
@@ -139,8 +172,51 @@ prompts:
     "similarity_score": 0.70,
     "differences": ["clothing changed to formal attire", "background unchanged"],
     "analysis": "..."
+  },
+  "aivis_metadata": {
+    "provider": "openrouter|ollama",
+    "model": "string",
+    "using_fallback": false,
+    "success": true,
+    "attempts": 1,
+    "error": null
+  },
+  "prompts_used": {
+    "positive": "...",
+    "negative": "..."
   }
 }
+```
+
+## Human ranking feedback (viewer)
+
+The viewer includes a ranking page where you can order iterations by suitability and add notes.
+
+- Location: `projects/{projectname}/working/{run_id}/human/ranking.json`
+- Structure:
+
+```json
+{
+  "ranking": ["3", "20", "12"],
+  "notes": {
+    "3": "Least cartoony, background good, attire fitting"
+  },
+  "updated_at": 1768001248.9
+}
+```
+
+### Using human ranking to improve future runs
+
+You can seed the next run’s `working/AIGen.yaml` from a previous run’s human ranking:
+
+- `rank1`: use the #1 ranked iteration’s prompts and parameters
+- `top3` / `top5`: average numeric parameters across the top K, choose the most common sampler/scheduler, use rank1 prompts, and include top‑K notes as context for prompt improvement
+
+From `iterativectl`:
+
+```bash
+iterativectl run --project myproj --seed-from-ranking latest --seed-ranking-mode rank1
+iterativectl run --project myproj --seed-from-ranking 2026-01-09_22-25-59 --seed-ranking-mode top3
 ```
 
 ## Technical Implementation Details
@@ -158,26 +234,34 @@ prompts:
   - Update LoadImage node with input image path
 - **Image Output**: Save to `{projectname}/working/iteration_{N}.png` with metadata JSON
 
-### AIVis Integration (qwen3-vl:4b)
-- **API Endpoint**: `http://localhost:11434/api/generate` (POST)
-- **Image Format**: Base64-encoded PNG (resize to max 1024px for performance)
-- **Timeout**: 180 seconds per request
-- **Retry Logic**: 2 retry attempts with 5 second delay
-- **Response Format**: JSON (request with `"format": "json"`)
-- **JSON Parsing**: Handle markdown code blocks (```json ... ```) in responses
+### AIVis Integration
+AIVis is provider-backed and configured via `AIVis.yaml`:
+
+- **Ollama**:
+  - Endpoint: `http://localhost:11434/api/generate`
+  - Models: e.g. `qwen3-vl:4b`, `llava-phi3:latest`
+- **OpenRouter**:
+  - Endpoint: `https://openrouter.ai/api/v1/chat/completions`
+  - Model example: `qwen/qwen-2.5-vl-7b-instruct:free`
+  - API key: `OPENROUTER_API_KEY` (or `api_key` in `AIVis.yaml`)
+
+Shared behaviour:
+- Images are sent as base64 PNG (resized to max 1024px for performance)
+- Timeout: 180 seconds per request
+- Retry: 2 retries with 5 second delay
+- JSON responses are requested via prompt and parsed robustly (including markdown code fences)
 
 ### AIVis Evaluation Process
-1. **Answer Questions**: For each question in `rules.yaml`, send image + question to AIVis
-   - Format: Structured prompt requesting JSON response matching question schema
-   - Store answers in `{projectname}/working/iteration_{N}_questions.json`
+1. **Answer Questions**: Questions are batched into a single AIVis request per iteration (to reduce cost and latency), producing a JSON object keyed by `field`.
+   - Store answers in `{run_id}/questions/iteration_{N}_questions.json`
 2. **Evaluate Acceptance Criteria**: For each criterion, determine pass/fail
    - Use question answers to inform evaluation
    - Calculate score: `(passed_criteria / total_criteria) * 100`
-   - Store evaluation in `{projectname}/working/iteration_{N}_evaluation.json`
+   - Store evaluation in `{run_id}/evaluation/iteration_{N}_evaluation.json`
 3. **Compare Images**: Compare generated vs original image
    - Calculate similarity score (0.0 = different, 1.0 = identical)
    - Identify differences (clothing, pose, features, background, proportions)
-   - Store comparison in `{projectname}/working/iteration_{N}_comparison.json`
+   - Store comparison in `{run_id}/comparison/iteration_{N}_comparison.json`
 
 ### Iteration Logic
 1. **Initial Setup**:
@@ -194,7 +278,7 @@ prompts:
    - Submit to ComfyUI API
    - Wait for completion (WebSocket + polling fallback)
    - Download generated image
-   - Save to `projects/{projectname}/working/iteration_{N}.png`
+   - Save to `projects/{projectname}/working/{run_id}/images/iteration_{N}.png`
    - Answer all questions from `projects/{projectname}/config/rules.yaml`
    - Evaluate against acceptance criteria
    - Compare with original image
@@ -205,25 +289,21 @@ prompts:
    - **Score < 100% AND iterations < max_iterations**:
      - If similarity > 0.85: Images too similar → increase `denoise` (+0.05) and `cfg` (+1.0)
      - If similarity < 0.3: Images too different → decrease `denoise` (-0.05)
-     - Based on failed criteria, generate improved prompts using AIVis text model
-     - Update `projects/{projectname}/working/AIGen.yaml` with new parameters and prompts
+    - Based on failed criteria, generate improved prompts using AIVis (text-only call)
+    - Update `projects/{projectname}/working/AIGen.yaml` with new parameters and prompts
      - Continue to next iteration
    - **Iterations >= max_iterations**: Stop, use best scoring iteration
 
 ### Prompt Improvement
-- Use AIVis text model (qwen3-vl:4b can handle text) or separate text model
+- Uses AIVis in text-only mode (same provider routing and metadata capture)
 - Input: Current prompt, evaluation results, failed criteria, comparison analysis
 - Output: Improved positive/negative prompts
 - Update `AIGen.yaml` prompts section
 
-### Logging
-- Application logs: `projects/{projectname}/logs/app.log` (all operations, errors, decisions)
-- Iteration metadata: Each iteration saves JSON files in `projects/{projectname}/working/`:
-  - `iteration_{N}.png` - Generated image
-  - `iteration_{N}_questions.json` - Question answers
-  - `iteration_{N}_evaluation.json` - Acceptance criteria evaluation
-  - `iteration_{N}_comparison.json` - Image comparison results
-  - `iteration_{N}_metadata.json` - Complete iteration data (parameters, scores, etc.)
+### Logging and Metadata
+- Application logs: `projects/{projectname}/logs/app.log`
+- Iteration artefacts: stored under `projects/{projectname}/working/{run_id}/...`
+- Resume state: stored in `projects/{projectname}/working/checkpoint.json`
 
 ### Error Handling
 - ComfyUI connection failures: Retry 3 times, then fail iteration
@@ -273,9 +353,24 @@ Options:
   --project NAME       Project name (uses projects/{NAME}/config/rules.yaml)
   --rules PATH         Path to rules.yaml (alternative to --project)
   --input PATH         Path to input image (if not using project structure)
+  --resume-from N      Resume from a specific iteration number (uses checkpoint/run id)
+  --reset              Clear checkpoint and archive old run artefacts into a new run folder
   --dry-run           Validate configs but don't run
   --verbose           Enable debug logging
 ```
+
+### Helper CLI (`iterativectl`)
+`iterativectl` provides convenience commands:
+- `iterativectl comfyui start|stop|restart|status`
+- `iterativectl viewer start|stop|status`
+- `iterativectl doctor [--project <name>]`
+- `iterativectl project create <name>`
+- `iterativectl rules check --project <name>`
+- `iterativectl rules suggest --project <name> [--apply]`
+- `iterativectl run --project <name> [--reset] [--resume-from N] [--seed-from-ranking RUN_ID|latest --seed-ranking-mode rank1|top3|top5]`
+
+### Viewer (quick web UI)
+There is a lightweight viewer app under `viewer/` that shows iteration images and metadata on a web page.
 
 ### Dependencies
 - Python 3.8+

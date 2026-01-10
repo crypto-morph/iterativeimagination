@@ -353,6 +353,8 @@ def main() -> int:
     parser.add_argument("--no-general-notes", action="store_true", help="Do not print AI general_notes (useful for restricted projects)")
     parser.add_argument("--guidelines", help="Path to a guidelines markdown file to send to AIVis")
     parser.add_argument("--no-guidelines", action="store_true", help="Send no guidelines to AIVis (project will rely on prompt alone)")
+    parser.add_argument("--human-feedback-run", help="Include human ranking/notes from working/<run_id>/human/ranking.json (RUN_ID or 'latest')")
+    parser.add_argument("--human-feedback-top-k", type=int, default=3, help="When including human feedback, include notes from the top K ranked iterations (default: 3)")
     args = parser.parse_args()
 
     repo_root = REPO_ROOT
@@ -384,7 +386,13 @@ def main() -> int:
     if args.suggest:
         # For restricted projects, default to suppressing general notes (they often include generic content-policy reminders)
         restricted_default = bool(project_name and project_name.lower().startswith("restricted"))
-        show_general_notes = not (args.no_general_notes or restricted_default)
+        project_cfg = (rules.get("project") or {}) if isinstance(rules.get("project"), dict) else {}
+        disable_general_notes_cfg = bool(
+            project_cfg.get("disable_general_notes")
+            or project_cfg.get("suppress_general_notes")
+        )
+        # Precedence: CLI flag wins; then per-project config; then restricted* default behaviour.
+        show_general_notes = not (args.no_general_notes or disable_general_notes_cfg or restricted_default)
 
         guidelines = load_guidelines_text(
             repo_root=repo_root,
@@ -392,6 +400,40 @@ def main() -> int:
             guidelines_path=args.guidelines,
             no_guidelines=args.no_guidelines,
         )
+        # Optionally include human ranking/notes as extra context for tag suggestions.
+        if args.human_feedback_run:
+            if not project_name:
+                print("⚠ --human-feedback-run requires --project.", file=sys.stderr)
+            else:
+                pm = ProjectManager(project_name)
+                run_id = str(args.human_feedback_run).strip()
+                if run_id.lower() == "latest":
+                    run_id = pm.latest_run_id_with_human_feedback() or ""
+                if run_id:
+                    ranking_doc = pm.load_human_ranking(run_id)
+                    if ranking_doc and isinstance(ranking_doc, dict):
+                        order = ranking_doc.get("ranking") or []
+                        notes_map = ranking_doc.get("notes") or {}
+                        top_k = max(1, int(args.human_feedback_top_k or 3))
+                        lines = []
+                        if isinstance(order, list):
+                            for idx, it in enumerate(order[:top_k], start=1):
+                                it_str = str(it).strip()
+                                note = notes_map.get(it_str, "")
+                                if isinstance(note, str) and note.strip():
+                                    lines.append(f"- Rank #{idx} (iteration {it_str}): {note.strip()}")
+                        if lines:
+                            human_block = (
+                                "\n\nHUMAN FEEDBACK (viewer ranking)\n"
+                                f"- project: {project_name}\n"
+                                f"- run_id: {run_id}\n"
+                                f"- top_k: {top_k}\n"
+                                + "\n".join(lines)
+                                + "\n"
+                            )
+                            guidelines = (guidelines or "") + human_block
+                    else:
+                        print(f"⚠ No readable human ranking found for run_id={run_id}", file=sys.stderr)
         aivis, _prompts_path = build_aivis_client(project_name, args.provider, args.model, args.api_key)
         rules_yaml_text = rules_path.read_text(encoding="utf-8")
         suggestions, metadata = aivis.suggest_rules_tags(rules_yaml_text, guidelines)

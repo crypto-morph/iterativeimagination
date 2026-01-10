@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rank Run {{ run_id }} - {{ project_name }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <a href="/project/{{ project_name }}/run/{{ run_id }}" class="back-link">← Back to Run Review</a>
+            <h1>{{ project_name }} - {{ run_id }}</h1>
+            <p>Rank iterations by suitability and add notes</p>
+        </header>
+
+        <main>
+            <div class="rank-toolbar">
+                <div class="rank-toolbar-left">
+                    <button id="saveRanking" class="primary-btn" type="button">Save</button>
+                    <span id="saveStatus" class="save-status"></span>
+                </div>
+                <div class="rank-toolbar-right">
+                    <span class="hint">Drag thumbnails to reorder. Hover to preview. Click to add notes.</span>
+                </div>
+            </div>
+
+            <div id="rankLoading" class="loading">Loading iterations...</div>
+
+            <div id="rankContent" class="hidden">
+                <div class="rank-layout">
+                    <aside class="rank-preview-pane" aria-label="Preview and notes">
+                        <div class="rank-preview-header">
+                            <div>
+                                <div class="rank-preview-heading">Preview</div>
+                                <div class="rank-preview-subheading">Hover a thumbnail to preview. Click to select and comment.</div>
+                            </div>
+                            <div class="rank-preview-badges">
+                                <span id="previewRank" class="badge">#–</span>
+                                <span id="previewScore" class="badge">–%</span>
+                                <span id="previewIter" class="badge">Iter –</span>
+                            </div>
+                        </div>
+
+                        <div class="rank-preview-image-wrap">
+                            <img id="previewImg" class="rank-preview-image" alt="Preview image">
+                        </div>
+
+                        <label class="rank-notes-label" for="notesEditor">Notes (why good/bad)</label>
+                        <textarea id="notesEditor" class="rank-notes-editor" rows="6" placeholder="Click a thumbnail, then write why it is particularly good or bad…"></textarea>
+                        <div class="rank-notes-help">Saved to <code>working/&lt;run_id&gt;/human/ranking.json</code></div>
+                    </aside>
+
+                    <section class="rank-thumbs-pane" aria-label="Sortable thumbnails">
+                        <div class="rank-thumbs-header">
+                            <div class="rank-thumbs-title">Rank order</div>
+                            <div class="rank-thumbs-subtitle">Best on the left/top. Drag to reorder.</div>
+                        </div>
+                        <div id="thumbGrid" class="thumb-grid" aria-label="Thumbnail grid"></div>
+                    </section>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/rank.js') }}"></script>
+</body>
+</html>
+

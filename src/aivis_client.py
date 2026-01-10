@@ -741,7 +741,15 @@ class AIVisClient:
         # Format differences and analysis for prompt
         differences = ', '.join(comparison.get('differences', [])[:5])
         analysis = comparison.get('analysis', '')[:200]
-        similarity_score = f"{comparison.get('similarity_score', 0.5):.2f}"
+        # Some providers may return numeric fields as strings; normalise for templating.
+        raw_sim = comparison.get('similarity_score', 0.5)
+        try:
+            sim_val = float(raw_sim)
+        except (TypeError, ValueError):
+            sim_val = 0.5
+        # Pass both a float (works with {similarity_score:.2f}) and a preformatted string (works with {similarity_score_str})
+        similarity_score = sim_val
+        similarity_score_str = f"{sim_val:.2f}"
         
         prompt = self.prompts['improve_prompts'].format(
             current_positive=current_positive,
@@ -749,6 +757,7 @@ class AIVisClient:
             overall_score=evaluation.get('overall_score', 0),
             failed_criteria=', '.join(failed_criteria),
             similarity_score=similarity_score,
+            similarity_score_str=similarity_score_str,
             differences=differences,
             analysis=analysis,
             rules_text=rules_text

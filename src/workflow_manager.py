@@ -18,6 +18,12 @@ class WorkflowManager:
     def load_workflow(workflow_path: str, project_root: Path) -> Dict:
         """Load workflow JSON file (supports relative and absolute paths)."""
         workflow_file = Path(workflow_path)
+        # project_root is typically projects/<name>/, so repo_root is two levels up.
+        # This matters when workflow_path is like "defaults/workflow/..." (repo-relative).
+        try:
+            repo_root = project_root.resolve().parent.parent
+        except Exception:
+            repo_root = project_root.parent.parent
         if not workflow_file.is_absolute():
             # Try relative to project root first
             workflow_file = project_root / workflow_path
@@ -26,13 +32,13 @@ class WorkflowManager:
                 if not workflow_path.startswith('workflow/'):
                     workflow_file = project_root / "workflow" / Path(workflow_path).name
                 if not workflow_file.exists():
-                    # Try relative to defaults
-                    defaults_path = project_root.parent / "defaults" / workflow_path
+                    # Try repo-root-relative path directly (common: "defaults/workflow/...")
+                    defaults_path = repo_root / workflow_path
                     if defaults_path.exists():
                         workflow_file = defaults_path
                     elif not workflow_path.startswith('workflow/'):
                         # Try defaults/workflow/
-                        defaults_path = project_root.parent / "defaults" / "workflow" / Path(workflow_path).name
+                        defaults_path = repo_root / "defaults" / "workflow" / Path(workflow_path).name
                         if defaults_path.exists():
                             workflow_file = defaults_path
         

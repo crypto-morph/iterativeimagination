@@ -1,6 +1,8 @@
 project:
   name: "style_change"
   max_iterations: 10
+  # If true, the rules suggester will not print AI-provided `general_notes` lines (handy for restricted projects).
+  # disable_general_notes: true
 
 acceptance_criteria:
   - field: clothing_style_changed

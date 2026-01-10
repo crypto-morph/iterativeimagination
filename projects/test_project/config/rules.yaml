@@ -11,16 +11,19 @@ acceptance_criteria:
   intent: change
   edit_strength: high
   must_include:
-    - "formal business attire"
-    - "suit"
-    - "blazer"
-    - "dress shirt"
-    - "tie"
+  - formal business attire
+  - suit
+  - blazer
+  - dress shirt
+  - tie
   ban_terms:
-    - "bikini"
-    - "swimsuit"
-    - "swimwear"
-    - "beachwear"
+  - bikini
+  - swimsuit
+  - swimwear
+  - beachwear
+  avoid_terms:
+  - casual
+  - sportswear
 - field: person_facial_features
   question: Are the person's facial features identical to the original image?
   type: boolean
@@ -29,7 +32,7 @@ acceptance_criteria:
   intent: preserve
   edit_strength: high
   must_include:
-    - "identical facial features"
+  - identical facial features
 - field: person_pose
   question: Is the person's pose identical to the original image?
   type: boolean
@@ -38,7 +41,7 @@ acceptance_criteria:
   intent: preserve
   edit_strength: medium
   must_include:
-    - "same pose"
+  - same pose
 - field: background_identical
   question: Is the background identical to the original image?
   type: boolean
@@ -47,7 +50,7 @@ acceptance_criteria:
   intent: preserve
   edit_strength: medium
   must_include:
-    - "identical background"
+  - identical background
 - field: person_body_proportions
   question: Are the person's body proportions identical to the original image?
   type: boolean
@@ -56,7 +59,7 @@ acceptance_criteria:
   intent: preserve
   edit_strength: medium
   must_include:
-    - "identical body proportions"
+  - identical body proportions
 questions:
 - field: person_clothing_description
   question: Describe the person's clothing in detail. What type of garments are they

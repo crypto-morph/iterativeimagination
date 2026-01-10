@@ -60,6 +60,58 @@ class ProjectManager:
         (run_root / "evaluation").mkdir(parents=True, exist_ok=True)
         (run_root / "comparison").mkdir(parents=True, exist_ok=True)
         (run_root / "metadata").mkdir(parents=True, exist_ok=True)
+        (run_root / "human").mkdir(parents=True, exist_ok=True)
+
+    def list_run_ids(self) -> list[str]:
+        """List run IDs under working/, newest first."""
+        working_dir = self.project_root / "working"
+        if not working_dir.exists():
+            return []
+        runs = []
+        for p in working_dir.iterdir():
+            if not p.is_dir():
+                continue
+            # run ids are timestamp-like and start with a digit (e.g. 2026-01-09_22-25-59)
+            if not p.name or not p.name[0].isdigit():
+                continue
+            runs.append(p.name)
+        runs.sort(reverse=True)
+        return runs
+
+    def latest_run_id(self) -> Optional[str]:
+        runs = self.list_run_ids()
+        return runs[0] if runs else None
+
+    def latest_run_id_with_human_feedback(self) -> Optional[str]:
+        """Return the most recent run id that has human feedback (human/ranking.json)."""
+        for run_id in self.list_run_ids():
+            p = self.get_run_root(run_id) / "human" / "ranking.json"
+            if p.exists():
+                return run_id
+        return None
+
+    def load_human_ranking(self, run_id: str) -> Optional[Dict]:
+        """Load working/<run_id>/human/ranking.json if present."""
+        p = self.get_run_root(run_id) / "human" / "ranking.json"
+        if not p.exists():
+            return None
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return None
+
+    def load_iteration_metadata(self, run_id: str, iteration_num: int) -> Optional[Dict]:
+        """Load metadata for an iteration in a run."""
+        paths = self.get_iteration_paths(iteration_num, run_id=run_id)
+        p = paths.get("metadata")
+        if not p or not p.exists():
+            return None
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return None
     
     def load_aigen_config(self) -> Dict:
         """Load AIGen.yaml, preferring working directory, then config, then defaults.

@@ -91,6 +91,149 @@ class IterativeImagination:
         self.best_iteration = None
         # Current run id for grouping working artefacts
         self.run_id: Optional[str] = None
+        # Optional human feedback context (from viewer ranking) to guide prompt improvements
+        self.human_feedback_context: str = ""
+        # Optional seed locking (useful for preserve-heavy tasks to reduce randomness)
+        self.locked_seed: Optional[int] = None
+
+    def _maybe_seed_from_human_ranking(
+        self,
+        seed_run: Optional[str],
+        seed_mode: str = "rank1",
+        dry_run: bool = False,
+    ) -> None:
+        """Optionally seed working/AIGen.yaml from a previous run's human ranking.
+
+        - seed_run: RUN_ID or "latest"
+        - seed_mode:
+            - "rank1": use top-ranked iteration’s prompts/params
+            - "top3"/"top5": average numeric params across top K; use rank1 prompts; combine notes
+
+        This does NOT change the project input image (so evaluation/comparison remain consistent).
+        """
+        if not seed_run:
+            return
+
+        mode = (seed_mode or "rank1").strip().lower()
+        if mode not in ("rank1", "top3", "top5"):
+            self.logger.warning(f"Unknown seed_mode={seed_mode!r}; falling back to 'rank1'")
+            mode = "rank1"
+
+        run_id = seed_run.strip()
+        if run_id.lower() == "latest":
+            latest = self.project.latest_run_id_with_human_feedback()
+            if not latest:
+                self.logger.warning("seed_from_ranking=latest but no previous runs found")
+                return
+            run_id = latest
+
+        ranking = self.project.load_human_ranking(run_id)
+        if not ranking:
+            self.logger.warning(f"No human ranking found for run_id={run_id}")
+            return
+
+        order = ranking.get("ranking") or []
+        if not isinstance(order, list) or not order:
+            self.logger.warning(f"Human ranking for run_id={run_id} has no 'ranking' list")
+            return
+
+        # Determine which iterations to use
+        k = 1
+        if mode == "top3":
+            k = 3
+        elif mode == "top5":
+            k = 5
+        top_ids = [str(x).strip() for x in order[:k]]
+        top_ids = [x for x in top_ids if x.isdigit()]
+        if not top_ids:
+            self.logger.warning(f"Human ranking for run_id={run_id} has no valid iteration numbers in top {k}")
+            return
+
+        top_iter = int(top_ids[0])  # rank1 always the first item
+        md_top = self.project.load_iteration_metadata(run_id=run_id, iteration_num=top_iter)
+        if not md_top:
+            self.logger.warning(f"Could not load metadata for run_id={run_id} iteration={top_iter}")
+            return
+
+        # Collect metadata for averaging if needed
+        metadatas = [md_top]
+        if k > 1:
+            for it_str in top_ids[1:]:
+                md = self.project.load_iteration_metadata(run_id=run_id, iteration_num=int(it_str))
+                if md:
+                    metadatas.append(md)
+
+        aigen = self.project.load_aigen_config()
+        aigen.setdefault("prompts", {})
+        aigen.setdefault("parameters", {})
+
+        # Prompts: use rank1 prompts as the base (averaging prompts is ill-defined).
+        prompts_used = (md_top.get("prompts_used") or {}) if isinstance(md_top, dict) else {}
+        pos = prompts_used.get("positive", "")
+        neg = prompts_used.get("negative", "")
+        if isinstance(pos, str):
+            aigen["prompts"]["positive"] = pos
+        if isinstance(neg, str):
+            aigen["prompts"]["negative"] = neg
+
+        # Parameters: average numeric params across topK, pick mode for categorical.
+        def _avg_num(key: str, default: float) -> float:
+            vals = []
+            for md in metadatas:
+                v = (md.get("parameters_used") or {}).get(key)
+                try:
+                    vals.append(float(v))
+                except (TypeError, ValueError):
+                    continue
+            return sum(vals) / len(vals) if vals else default
+
+        def _mode_str(key: str, default: str) -> str:
+            counts = {}
+            for md in metadatas:
+                v = (md.get("parameters_used") or {}).get(key)
+                if not isinstance(v, str) or not v.strip():
+                    continue
+                vv = v.strip()
+                counts[vv] = counts.get(vv, 0) + 1
+            if not counts:
+                return default
+            return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
+
+        if mode == "rank1":
+            # Use rank1 params directly
+            params_used = md_top.get("parameters_used") or {}
+            for key in ("denoise", "cfg", "steps", "sampler_name", "scheduler"):
+                if key in params_used:
+                    aigen["parameters"][key] = params_used[key]
+        else:
+            aigen["parameters"]["denoise"] = round(_avg_num("denoise", float(aigen["parameters"].get("denoise", 0.5))), 3)
+            aigen["parameters"]["cfg"] = round(_avg_num("cfg", float(aigen["parameters"].get("cfg", 7.0))), 3)
+            aigen["parameters"]["steps"] = int(round(_avg_num("steps", float(aigen["parameters"].get("steps", 25)))))
+            aigen["parameters"]["sampler_name"] = _mode_str("sampler_name", str(aigen["parameters"].get("sampler_name", "dpmpp_2m")))
+            aigen["parameters"]["scheduler"] = _mode_str("scheduler", str(aigen["parameters"].get("scheduler", "karras")))
+
+        # Always randomise seed on next run
+        aigen["parameters"]["seed"] = None
+        self.project.save_aigen_config(aigen)
+
+        # Human feedback context: include notes for all topK (if present)
+        notes_map = ranking.get("notes") or {}
+        notes_lines = []
+        for it_str in top_ids:
+            note = notes_map.get(it_str, "")
+            if isinstance(note, str) and note.strip():
+                notes_lines.append(f"- Iteration {it_str}: {note.strip()}")
+        if notes_lines:
+            self.human_feedback_context = (
+                f"\n\nHUMAN FEEDBACK (prior run {run_id}, seed_mode={mode}):\n" + "\n".join(notes_lines) + "\n"
+            )
+        else:
+            self.human_feedback_context = ""
+
+        self.logger.info(
+            f"Seeded working/AIGen.yaml from human ranking: run_id={run_id} mode={mode} iterations={top_ids}"
+            + (" (dry-run)" if dry_run else "")
+        )
     
     def _setup_logging(self):
         """Setup application logging."""
@@ -190,6 +333,23 @@ class IterativeImagination:
         
         # Load current AIGen.yaml
         aigen_config = self.project.load_aigen_config()
+        project_cfg = (self.rules.get("project") or {}) if isinstance(self.rules, dict) else {}
+        lock_seed = bool(project_cfg.get("lock_seed"))
+        if lock_seed:
+            params = aigen_config.get("parameters") or {}
+            seed = params.get("seed")
+            if seed is None:
+                # If we already discovered a good seed earlier in the run, re-use it.
+                if self.locked_seed is not None:
+                    params["seed"] = int(self.locked_seed)
+                    aigen_config["parameters"] = params
+                    # Persist so ComfyUI workflow gets a deterministic seed.
+                    self.project.save_aigen_config(aigen_config)
+            else:
+                try:
+                    self.locked_seed = int(seed)
+                except Exception:
+                    pass
         
         # Prepare input image for ComfyUI
         input_filename = self.project.prepare_input_image(
@@ -293,11 +453,34 @@ class IterativeImagination:
         
         # Build and save metadata
         parameters_used = aigen_config.get('parameters', {}).copy()
+        used_seed: Optional[int] = None
         if 'seed' in parameters_used and parameters_used['seed'] is None:
             for node_id, node_data in updated_workflow.items():
                 if isinstance(node_data, dict) and node_data.get('class_type') == 'KSampler':
-                    parameters_used['seed'] = node_data['inputs'].get('seed')
+                    try:
+                        used_seed = int(node_data['inputs'].get('seed'))
+                    except Exception:
+                        used_seed = None
+                    parameters_used['seed'] = used_seed
                     break
+        else:
+            try:
+                used_seed = int(parameters_used.get("seed"))
+            except Exception:
+                used_seed = None
+
+        # If seed locking is enabled and we haven't locked a seed yet, lock to the first used seed.
+        if lock_seed and self.locked_seed is None and used_seed is not None:
+            self.locked_seed = used_seed
+            try:
+                a2 = self.project.load_aigen_config()
+                p2 = a2.get("parameters") or {}
+                if p2.get("seed") is None:
+                    p2["seed"] = used_seed
+                    a2["parameters"] = p2
+                    self.project.save_aigen_config(a2)
+            except Exception:
+                pass
         
         # Capture prompts used for this iteration
         prompts_used = aigen_config.get('prompts', {}).copy()
@@ -331,18 +514,10 @@ class IterativeImagination:
         # Load current AIGen.yaml
         aigen_config = self.project.load_aigen_config()
         
-        # Adjust parameters based on similarity
+        # Adjust parameters based on similarity (kept conservative; main tuning is intent-based below).
         params = aigen_config.get('parameters', {})
         current_denoise = params.get('denoise', 0.5)
         current_cfg = params.get('cfg', 7.0)
-        
-        if similarity > 0.85:
-            params['denoise'] = min(1.0, current_denoise + 0.05)
-            params['cfg'] = min(20.0, current_cfg + 1.0)
-            self.logger.info(f"Images too similar - increasing denoise to {params['denoise']:.2f}, cfg to {params['cfg']:.1f}")
-        elif similarity < 0.3:
-            params['denoise'] = max(0.1, current_denoise - 0.05)
-            self.logger.info(f"Images too different - decreasing denoise to {params['denoise']:.2f}")
         
         # Improve prompts based on failed criteria (data-driven via rules.yaml tags)
         criteria_defs = self.rules.get('acceptance_criteria', []) or []
@@ -396,33 +571,67 @@ class IterativeImagination:
             else:
                 failed_preserve.append(field)
 
-        if failed_change:
-            # If any "change" goal is failing, increase denoise and cfg to allow stronger edits.
-            max_strength = max(_strength_value(criteria_by_field[f].get('edit_strength')) for f in failed_change)
-            # Target a higher minimum denoise as edit strength increases.
-            desired_min_denoise = min(0.90, 0.70 + 0.05 * max_strength)  # ~0.72..0.78 typical
-            if params.get('denoise', current_denoise) < desired_min_denoise:
-                bump = 0.05 + 0.03 * max_strength
-                params['denoise'] = min(0.95, max(desired_min_denoise, current_denoise + bump))
-                self.logger.info(
-                    f"Change goals failing ({failed_change}) - increasing denoise to {params['denoise']:.2f}"
-                )
-            # Increase CFG modestly to strengthen prompt guidance.
-            desired_min_cfg = 8.5 + 0.5 * max_strength
-            if params.get('cfg', current_cfg) < desired_min_cfg:
-                params['cfg'] = min(20.0, max(desired_min_cfg, current_cfg + (0.5 + 0.5 * max_strength)))
-                self.logger.info(
-                    f"Change goals failing ({failed_change}) - increasing cfg to {params['cfg']:.1f}"
-                )
+        # Per-project bounds/caps (optional)
+        proj_cfg = (self.rules.get("project") or {}) if isinstance(self.rules, dict) else {}
+        try:
+            denoise_min = float(proj_cfg.get("denoise_min", 0.20))
+        except Exception:
+            denoise_min = 0.20
+        try:
+            denoise_max = float(proj_cfg.get("denoise_max", 0.80))
+        except Exception:
+            denoise_max = 0.80
+        try:
+            cfg_max = float(proj_cfg.get("cfg_max", 12.0))
+        except Exception:
+            cfg_max = 12.0
+        try:
+            cfg_min = float(proj_cfg.get("cfg_min", 4.0))
+        except Exception:
+            cfg_min = 4.0
 
-        if failed_preserve and not failed_change:
-            # If only "preserve" goals are failing, reduce denoise a little to keep closer to original.
+        # Heuristic: if most criteria are preserve, cap denoise/cfg harder to prevent "wandering".
+        intents = [(c.get("intent") or "preserve").strip().lower() for c in criteria_defs if isinstance(c, dict)]
+        n_preserve = sum(1 for x in intents if x != "change")
+        n_change = sum(1 for x in intents if x == "change")
+        preserve_heavy = bool(proj_cfg.get("preserve_heavy")) or (n_preserve >= 3 and n_change <= 2)
+        # Important: preserve-heavy tasks still need enough edit strength to achieve the *one* change goal.
+        # So we only tighten caps when preserve criteria are failing (i.e. we're drifting).
+        if preserve_heavy and failed_preserve:
+            denoise_max = min(denoise_max, 0.62)
+            cfg_max = min(cfg_max, 8.5)
+
+        cur_d = float(params.get("denoise", current_denoise) or current_denoise)
+        cur_cfg = float(params.get("cfg", current_cfg) or current_cfg)
+
+        if failed_preserve:
+            # Preserve failures: pull closer to original immediately.
             max_strength = max(_strength_value(criteria_by_field[f].get('edit_strength')) for f in failed_preserve)
-            bump = 0.03 + 0.03 * max_strength
-            params['denoise'] = max(0.10, current_denoise - bump)
+            delta = 0.05 + 0.02 * max_strength
+            params["denoise"] = max(denoise_min, cur_d - delta)
+            params["cfg"] = max(cfg_min, cur_cfg - (0.5 + 0.5 * max_strength))
             self.logger.info(
-                f"Preserve goals failing ({failed_preserve}) - decreasing denoise to {params['denoise']:.2f}"
+                f"Preserve goals failing ({failed_preserve}) - decreasing denoise to {params['denoise']:.2f}, cfg to {params['cfg']:.1f}"
             )
+        elif failed_change:
+            # Change failures with preserve OK: allow a bit more freedom, but keep within caps.
+            max_strength = max(_strength_value(criteria_by_field[f].get('edit_strength')) for f in failed_change)
+            # Bigger step size here to actually make progress on stubborn edits (e.g. removing garments).
+            delta = 0.06 + 0.02 * max_strength
+            # If change is failing and preserve is OK, we should steadily increase denoise until the change lands,
+            # while staying within the project caps.
+            params["denoise"] = min(denoise_max, max(denoise_min, cur_d + delta))
+
+            cfg_delta = 0.5 + 0.5 * max_strength
+            params["cfg"] = min(cfg_max, max(cfg_min, cur_cfg + cfg_delta))
+            self.logger.info(
+                f"Change goals failing ({failed_change}) - denoise {params['denoise']:.2f} cfg {params['cfg']:.1f} (caps: denoise<= {denoise_max:.2f}, cfg<= {cfg_max:.1f})"
+            )
+
+        # If we diverged too far, pull back regardless.
+        if similarity <= 0.30:
+            params["denoise"] = max(denoise_min, float(params.get("denoise", cur_d)) - 0.05)
+            self.logger.info(f"Images too different (similarity={similarity:.2f}) - reducing denoise to {params['denoise']:.2f}")
         
         if failed_criteria:
             self.logger.info(f"Improving prompts based on failed criteria: {failed_criteria}")
@@ -444,6 +653,8 @@ class IterativeImagination:
                 return f"- {c.get('field')}: {q} ({'; '.join(bits)})"
 
             rules_text = "\n".join([_crit_line(c) for c in criteria_defs])
+            if self.human_feedback_context:
+                rules_text = rules_text + self.human_feedback_context
             current_positive = aigen_config.get('prompts', {}).get('positive', '')
             current_negative = aigen_config.get('prompts', {}).get('negative', '')
             
@@ -479,6 +690,23 @@ class IterativeImagination:
             ban_terms = _dedupe(ban_terms)
             avoid_terms = _dedupe(avoid_terms)
 
+            def _remove_terms(text: str, terms: List[str]) -> str:
+                if not text or not terms:
+                    return text or ""
+                out = text
+                for t in terms:
+                    tt = (t or "").strip()
+                    if not tt:
+                        continue
+                    # Use word boundaries for single tokens; plain replace for phrases
+                    if " " in tt:
+                        out = re.sub(re.escape(tt), "", out, flags=re.IGNORECASE)
+                    else:
+                        out = re.sub(rf"\b{re.escape(tt)}\b", "", out, flags=re.IGNORECASE)
+                out = re.sub(r"\s{2,}", " ", out)
+                out = re.sub(r"\s*,\s*", ", ", out)
+                return out.strip(" ,\n")
+
             for t in avoid_terms:
                 improved_positive = re.sub(rf"\\b{re.escape(t)}\\b", "", improved_positive, flags=re.IGNORECASE)
             improved_positive = re.sub(r"\\s{2,}", " ", improved_positive).strip(" ,\n")
@@ -497,6 +725,50 @@ class IterativeImagination:
                             neg += ", "
                         neg += t
                 improved_negative = neg.strip(" ,\n")
+
+            # Sanity guards to prevent contradictory prompts:
+            # - must_include should not be in negative
+            # - ban_terms should not be in positive
+            improved_negative = _remove_terms(improved_negative, must_include_terms)
+            improved_positive = _remove_terms(improved_positive, ban_terms)
+
+            # Avoid dangling "no" tokens (these can confuse the image model and encourage drift).
+            def _clean_tail(s: str) -> str:
+                ss = (s or "").strip()
+                if ss.lower().endswith(", no"):
+                    ss = ss[:-4].strip(" ,\n")
+                elif ss.lower().endswith(" no"):
+                    # only remove if "no" is the last token
+                    parts = ss.split()
+                    if parts and parts[-1].lower() == "no":
+                        ss = " ".join(parts[:-1]).strip(" ,\n")
+                return ss
+
+            def _strip_no_phrases_from_positive(pos: str) -> str:
+                """Keep positive prompts positive.
+
+                We frequently see LLMs emit lots of 'no X' fragments which weaken conditioning and
+                lead to unstable results. Negations belong in the negative prompt.
+                """
+                import re
+
+                p = (pos or "").strip()
+                if not p:
+                    return p
+                # Remove common broken fragments
+                p = re.sub(r"\bno\s+on\s+body\b", "", p, flags=re.IGNORECASE)
+                # Remove 'no <word>' phrases
+                p = re.sub(r"\bno\s+[a-zA-Z_]+\b", "", p, flags=re.IGNORECASE)
+                # Remove standalone 'no'
+                p = re.sub(r"\bno\b", "", p, flags=re.IGNORECASE)
+                # Normalise separators/spaces
+                p = re.sub(r"\s{2,}", " ", p)
+                p = re.sub(r"\s*,\s*", ", ", p)
+                return p.strip(" ,\n")
+
+            improved_positive = _clean_tail(improved_positive)
+            improved_negative = _clean_tail(improved_negative)
+            improved_positive = _strip_no_phrases_from_positive(improved_positive)
             
             if 'prompts' not in aigen_config:
                 aigen_config['prompts'] = {}
@@ -506,7 +778,13 @@ class IterativeImagination:
         # Save updated AIGen.yaml
         self.project.save_aigen_config(aigen_config)
     
-    def run(self, dry_run: bool = False, resume_from: Optional[int] = None):
+    def run(
+        self,
+        dry_run: bool = False,
+        resume_from: Optional[int] = None,
+        seed_from_ranking: Optional[str] = None,
+        seed_ranking_mode: str = "rank1",
+    ):
         """Run the iterative improvement loop.
         
         Args:
@@ -518,6 +796,9 @@ class IterativeImagination:
         self.logger.info(f"Input image: {self.input_image_path}")
         self.logger.info(f"Max iterations: {self.rules['project']['max_iterations']}\n{'='*60}")
         
+        # Optional seed before doing anything else (even in dry-run, to show it is wired)
+        self._maybe_seed_from_human_ranking(seed_from_ranking, seed_mode=seed_ranking_mode, dry_run=dry_run)
+
         if dry_run:
             self.logger.info("DRY RUN - Validating configuration only")
             if not self.comfyui.test_connection():
@@ -630,6 +911,11 @@ def main():
     parser.add_argument('--dry-run', action='store_true', help='Validate configs but don\'t run')
     parser.add_argument('--verbose', action='store_true', help='Enable debug logging')
     parser.add_argument('--resume-from', type=int, help='Resume from a specific iteration number (or use checkpoint if not specified)')
+    # New naming (preferred)
+    parser.add_argument('--seed-from-ranking', type=str, help='Seed from a prior run human ranking (RUN_ID or "latest")')
+    parser.add_argument('--seed-ranking-mode', type=str, default="rank1", help='Seeding mode: rank1|top3|top5 (default: rank1)')
+    # Backwards compatible alias (deprecated)
+    parser.add_argument('--seed-from-human', type=str, help='(deprecated) alias for --seed-from-ranking')
     parser.add_argument(
         '--reset',
         action='store_true',
@@ -719,7 +1005,13 @@ def main():
             # Note: we deliberately do NOT delete iteration_*.png/json so you keep history.
             # If you want a totally clean slate, delete projects/{project}/working/iteration_* manually.
 
-        success = app.run(dry_run=args.dry_run, resume_from=args.resume_from)
+        seed_run = args.seed_from_ranking or args.seed_from_human
+        success = app.run(
+            dry_run=args.dry_run,
+            resume_from=args.resume_from,
+            seed_from_ranking=seed_run,
+            seed_ranking_mode=args.seed_ranking_mode,
+        )
         sys.exit(0 if success else 1)
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
