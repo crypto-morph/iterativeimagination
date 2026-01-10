@@ -7,6 +7,59 @@ let currentSort = 'timeline';
 let timelineOrder = [];
 let selectedIterationNumber = null;
 let iterationByNumber = {};
+let lastFingerprint = '';
+let autoRefreshTimer = null;
+
+function computeFingerprint(iterations) {
+    if (!Array.isArray(iterations) || iterations.length === 0) return 'empty';
+    const nums = iterations
+        .map(it => it?.iteration_number)
+        .filter(n => typeof n === 'number')
+        .sort((a, b) => a - b);
+    const maxN = nums.length ? nums[nums.length - 1] : 0;
+    const maxTs = Math.max(...iterations.map(it => Number(it?.timestamp || 0)));
+    return `${iterations.length}:${maxN}:${maxTs}`;
+}
+
+function setAutoRefreshStatus(text) {
+    const el = document.getElementById('autoRefreshStatus');
+    if (el) el.textContent = text || '';
+}
+
+function applyIterations(dataIterations, { preferLatestIfSelectedLatest = true } = {}) {
+    const prevLatest = timelineOrder.length ? timelineOrder[timelineOrder.length - 1] : null;
+    const wasSelectedLatest = (selectedIterationNumber !== null && prevLatest !== null && selectedIterationNumber === prevLatest);
+
+    allIterations = dataIterations;
+    iterationByNumber = {};
+    allIterations.forEach(it => {
+        if (it && typeof it.iteration_number === 'number') {
+            iterationByNumber[it.iteration_number] = it;
+        }
+    });
+
+    timelineOrder = [...allIterations]
+        .map(it => it.iteration_number)
+        .filter(n => typeof n === 'number')
+        .sort((a, b) => a - b);
+
+    buildIterationButtons();
+
+    if (timelineOrder.length > 0) {
+        const latest = timelineOrder[timelineOrder.length - 1];
+        if (selectedIterationNumber === null) {
+            selectIteration(latest);
+        } else if (preferLatestIfSelectedLatest && wasSelectedLatest) {
+            selectIteration(latest);
+        } else if (iterationByNumber[selectedIterationNumber]) {
+            selectIteration(selectedIterationNumber);
+        } else {
+            selectIteration(latest);
+        }
+    }
+
+    sortAndDisplayIterations();
+}
 
 async function loadIterations() {
     try {
@@ -18,25 +71,8 @@ async function loadIterations() {
             return;
         }
         
-        allIterations = data.iterations;
-        iterationByNumber = {};
-        allIterations.forEach(it => {
-            if (it && typeof it.iteration_number === 'number') {
-                iterationByNumber[it.iteration_number] = it;
-            }
-        });
-
-        timelineOrder = [...allIterations]
-            .map(it => it.iteration_number)
-            .filter(n => typeof n === 'number')
-            .sort((a, b) => a - b);
-
-        buildIterationButtons();
-        // Default select: latest iteration (timeline end)
-        if (timelineOrder.length > 0) {
-            selectIteration(timelineOrder[timelineOrder.length - 1]);
-        }
-        sortAndDisplayIterations();
+        applyIterations(data.iterations || []);
+        lastFingerprint = computeFingerprint(allIterations);
         document.getElementById('loading').classList.add('hidden');
         document.getElementById('content').classList.remove('hidden');
     } catch (error) {
@@ -296,6 +332,38 @@ document.getElementById('sortScore')?.addEventListener('click', () => {
     document.getElementById('sortTimeline').classList.remove('active');
     sortAndDisplayIterations();
 });
+
+// Auto refresh toggle + poll loop
+const autoRefresh = document.getElementById('autoRefresh');
+if (autoRefresh) {
+    autoRefresh.addEventListener('change', () => {
+        setAutoRefreshStatus(autoRefresh.checked ? ' (on)' : ' (off)');
+    });
+    setAutoRefreshStatus(autoRefresh.checked ? ' (on)' : ' (off)');
+}
+
+async function pollForUpdates() {
+    try {
+        if (document.visibilityState !== 'visible') return;
+        if (autoRefresh && !autoRefresh.checked) return;
+        const response = await fetch(`/api/project/${projectName}/run/${runId}/iterations`, { cache: 'no-store' });
+        const data = await response.json();
+        if (data.error) return;
+        const next = data.iterations || [];
+        const fp = computeFingerprint(next);
+        if (fp !== lastFingerprint) {
+            lastFingerprint = fp;
+            applyIterations(next, { preferLatestIfSelectedLatest: true });
+            setAutoRefreshStatus(' (updated)');
+            setTimeout(() => setAutoRefreshStatus(autoRefresh && autoRefresh.checked ? ' (on)' : ' (off)'), 800);
+        }
+    } catch (e) {
+        // ignore transient failures
+    }
+}
+
+if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+autoRefreshTimer = setInterval(pollForUpdates, 2500);
 
 // Load on page load
 loadIterations();

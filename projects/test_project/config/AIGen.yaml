@@ -1,6 +1,9 @@
 workflow_file: workflow/img2img_no_mask_api.json
 model:
   ckpt_name: realisticVisionV60B1_v51VAE.safetensors
+  # Use an inpainting-tuned checkpoint automatically when a mask.png is present.
+  # This improves "change one local thing, preserve everything else" edits.
+  ckpt_name_inpaint: realisticVisionV60B1_v51VAE-inpainting.safetensors
 comfyui:
   host: localhost
   port: 8188
@@ -15,3 +18,7 @@ parameters:
 prompts:
   positive: ''
   negative: ''
+
+# Toggle masking without deleting the file. When false, input/mask.png is ignored.
+masking:
+  enabled: false

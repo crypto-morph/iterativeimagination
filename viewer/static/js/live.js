@@ -6,6 +6,7 @@ let runId = null;
 let pollTimer = null;
 let pendingNudge = { less_random: false, too_similar: false };
 let rulesLoadedText = null;
+let promptsLoaded = false;
 
 function $(id) {
   return document.getElementById(id);
@@ -17,6 +18,11 @@ function setStatus(text) {
 
 function setRulesStatus(text) {
   const el = $("rulesStatus");
+  if (el) el.textContent = text || "";
+}
+
+function setPromptsStatus(text) {
+  const el = $("promptsStatus");
   if (el) el.textContent = text || "";
 }
 
@@ -131,6 +137,50 @@ async function saveRules() {
   } catch (e) {
     setRulesStatus(`Error: ${e.message}`);
     $("saveRulesBtn").disabled = false;
+  }
+}
+
+async function loadPrompts() {
+  $("loadPromptsBtn").disabled = true;
+  setPromptsStatus("Loading prompts...");
+  try {
+    const res = await fetch(`/api/project/${project}/working/aigen/prompts`, { cache: "no-store" });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Failed to load prompts");
+    $("positivePromptBox").value = data.positive || "";
+    $("negativePromptBox").value = data.negative || "";
+    $("savePromptsBtn").disabled = false;
+    promptsLoaded = true;
+    setPromptsStatus("Prompts loaded. Edit and click Save.");
+  } catch (e) {
+    setPromptsStatus(`Error: ${e.message}`);
+  } finally {
+    $("loadPromptsBtn").disabled = false;
+  }
+}
+
+async function savePrompts() {
+  if (!promptsLoaded) {
+    setPromptsStatus("Load prompts first.");
+    return;
+  }
+  const positive = $("positivePromptBox").value || "";
+  const negative = $("negativePromptBox").value || "";
+  $("savePromptsBtn").disabled = true;
+  setPromptsStatus("Saving prompts...");
+  try {
+    const res = await fetch(`/api/project/${project}/working/aigen/prompts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ positive, negative })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Failed to save prompts");
+    setPromptsStatus("Saved. Next iteration will use these prompts.");
+  } catch (e) {
+    setPromptsStatus(`Error: ${e.message}`);
+  } finally {
+    $("savePromptsBtn").disabled = false;
   }
 }
 
@@ -274,6 +324,8 @@ function wireUI() {
   $("submitFeedbackBtn").addEventListener("click", submitFeedback);
   $("loadRulesBtn").addEventListener("click", loadRules);
   $("saveRulesBtn").addEventListener("click", saveRules);
+  $("loadPromptsBtn").addEventListener("click", loadPrompts);
+  $("savePromptsBtn").addEventListener("click", savePrompts);
 
   $("btnLessRandom").addEventListener("click", () => {
     pendingNudge.less_random = !pendingNudge.less_random;

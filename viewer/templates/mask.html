@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mask Editor - {{ project_name }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div style="display:flex; gap:12px; align-items:baseline; justify-content:space-between;">
+                <div>
+                    <h1>Mask editor: {{ project_name }}</h1>
+                    <p>Draw white where you want the model to edit (inpaint). Black keeps the original.</p>
+                </div>
+                <div style="display:flex; gap:10px;">
+                    <a class="btn" href="/project/{{ project_name }}/live">Live run</a>
+                    <a class="btn" href="/">Back</a>
+                </div>
+            </div>
+        </header>
+
+        <main>
+            <section class="controls-panel">
+                <div class="mask-toolbar">
+                    <label class="muted">Mask:
+                        <select id="maskSelect"></select>
+                    </label>
+                    <label class="muted">New mask:
+                        <input id="newMaskName" type="text" placeholder="left / middle / right" style="width:160px;">
+                    </label>
+                    <button id="btnCreateMask" class="btn">Create</button>
+                    <button id="toolBrush" class="btn active">Brush</button>
+                    <button id="toolEraser" class="btn">Eraser</button>
+                    <label class="muted">Brush size:
+                        <input id="brushSize" type="range" min="3" max="80" value="24">
+                    </label>
+                    <button id="btnClear" class="btn">Clear</button>
+                    <button id="btnLoad" class="btn">Load existing</button>
+                    <button id="btnSave" class="btn primary">Save mask</button>
+                    <span id="maskStatus" class="muted"></span>
+                </div>
+            </section>
+
+            <section style="margin-top:16px;">
+                <div class="mask-stage">
+                    <div class="mask-canvas-wrap">
+                        <img id="baseImg" class="mask-base" src="/api/project/{{ project_name }}/input/image" alt="Input">
+                        <canvas id="maskCanvas" class="mask-canvas"></canvas>
+                    </div>
+                    <div class="mask-help">
+                        <h3>Tips</h3>
+                        <ul>
+                            <li>Mask only the garment area (avoid face/hair/background).</li>
+                            <li>Feather the edges a bit (use a larger brush) for smoother blends.</li>
+                            <li>Default mask saves to <code>input/mask.png</code>. Named masks save to <code>input/masks/&lt;name&gt;.png</code>.</li>
+                        </ul>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script>
+        window.__MASK_PROJECT__ = "{{ project_name }}";
+        window.__MASK_NAME__ = "{{ mask_name or 'default' }}";
+    </script>
+    <script src="{{ url_for('static', filename='js/mask.js') }}"></script>
+</body>
+</html>
+

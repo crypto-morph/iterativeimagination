@@ -5,9 +5,11 @@ Iteration Viewer - Web app to visualize iteration images and metadata
 
 import json
 import threading
+import base64
 from pathlib import Path
 from flask import Flask, render_template, jsonify, send_from_directory, request, Response
 import yaml
+import re
 
 app = Flask(__name__)
 PROJECTS_ROOT = Path(__file__).parent.parent / "projects"
@@ -63,6 +65,26 @@ def view_run(project_name: str, run_id: str):
 def live_run(project_name: str):
     """Live interactive run page (one iteration at a time)."""
     return render_template('live.html', project_name=project_name)
+
+
+@app.route('/project/<project_name>/mask')
+def mask_editor(project_name: str):
+    """Mask editor page (supports multiple masks)."""
+    mask_name = (request.args.get("mask") or "default").strip() or "default"
+    return render_template('mask.html', project_name=project_name, mask_name=mask_name)
+
+
+@app.route('/project/<project_name>/mask/<mask_name>')
+def mask_editor_named(project_name: str, mask_name: str):
+    """Mask editor page for a specific mask name."""
+    mask_name = (mask_name or "default").strip() or "default"
+    return render_template('mask.html', project_name=project_name, mask_name=mask_name)
+
+
+@app.route('/project/<project_name>/rulesui')
+def rules_ui(project_name: str):
+    """Structured rules.yaml editor UI."""
+    return render_template('rules_ui.html', project_name=project_name)
 
 
 @app.route('/project/<project_name>/run/<run_id>/rank')
@@ -168,6 +190,141 @@ def get_input_image(project_name: str):
     return jsonify({'error': 'Input image not found'}), 404
 
 
+@app.route('/api/project/<project_name>/input/mask')
+def get_input_mask(project_name: str):
+    """Serve the current mask.png (if present)."""
+    input_dir = PROJECTS_ROOT / project_name / "input"
+    if (input_dir / "mask.png").exists():
+        return send_from_directory(str(input_dir), "mask.png")
+    return jsonify({'error': 'Mask not found'}), 404
+
+
+@app.route('/api/project/<project_name>/input/mask', methods=['POST'])
+def save_input_mask(project_name: str):
+    """Save mask.png from a data URL (PNG). Creates a timestamped backup if mask exists."""
+    payload = request.get_json(silent=True) or {}
+    data_url = payload.get("data_url")
+    if not isinstance(data_url, str) or "base64," not in data_url:
+        return jsonify({"error": "Expected JSON {data_url: 'data:image/png;base64,...'}"}), 400
+
+    try:
+        project_dir = _safe_project_dir(project_name)
+    except Exception:
+        return jsonify({"error": "Invalid project"}), 400
+
+    input_dir = project_dir / "input"
+    input_dir.mkdir(parents=True, exist_ok=True)
+    mask_path = input_dir / "mask.png"
+
+    # Backup existing mask
+    if mask_path.exists():
+        import time
+
+        backup = input_dir / f"mask.bak.{time.strftime('%Y-%m-%d_%H-%M-%S')}.png"
+        try:
+            backup.write_bytes(mask_path.read_bytes())
+        except Exception:
+            pass
+
+    try:
+        b64 = data_url.split("base64,", 1)[1]
+        raw = base64.b64decode(b64)
+        mask_path.write_bytes(raw)
+        return jsonify({"ok": True}), 200
+    except Exception as e:
+        return jsonify({"error": f"Failed to save mask: {e}"}), 500
+
+
+@app.route('/api/project/<project_name>/input/masks')
+def list_input_masks(project_name: str):
+    """List available masks for a project.
+
+    - Legacy: input/mask.png (name=default)
+    - Multi-mask: input/masks/<name>.png (name=<name>)
+    """
+    try:
+        project_dir = _safe_project_dir(project_name)
+    except Exception:
+        return jsonify({"error": "Invalid project"}), 400
+
+    return jsonify({"masks": _list_project_masks(project_dir)}), 200
+
+
+@app.route('/api/project/<project_name>/input/mask/<mask_name>')
+def get_named_mask(project_name: str, mask_name: str):
+    """Serve a named mask.
+
+    - mask_name=default -> input/mask.png
+    - otherwise -> input/masks/<mask_name>.png
+    """
+    try:
+        project_dir = _safe_project_dir(project_name)
+        mname = _safe_mask_name(mask_name)
+    except Exception:
+        return jsonify({"error": "Invalid project or mask"}), 400
+
+    input_dir = project_dir / "input"
+    if mname == "default":
+        p = input_dir / "mask.png"
+        if p.exists():
+            return send_from_directory(str(input_dir), "mask.png")
+        return jsonify({"error": "Mask not found"}), 404
+
+    masks_dir = input_dir / "masks"
+    p = masks_dir / f"{mname}.png"
+    if p.exists():
+        return send_from_directory(str(masks_dir), p.name)
+    return jsonify({"error": "Mask not found"}), 404
+
+
+@app.route('/api/project/<project_name>/input/mask/<mask_name>', methods=['POST'])
+def save_named_mask(project_name: str, mask_name: str):
+    """Save a named mask from a data URL (PNG).
+
+    - mask_name=default -> input/mask.png
+    - otherwise -> input/masks/<mask_name>.png
+    Creates a timestamped backup if the target exists.
+    """
+    payload = request.get_json(silent=True) or {}
+    data_url = payload.get("data_url")
+    if not isinstance(data_url, str) or "base64," not in data_url:
+        return jsonify({"error": "Expected JSON {data_url: 'data:image/png;base64,...'}"}), 400
+
+    try:
+        project_dir = _safe_project_dir(project_name)
+        mname = _safe_mask_name(mask_name)
+    except Exception:
+        return jsonify({"error": "Invalid project or mask"}), 400
+
+    input_dir = project_dir / "input"
+    input_dir.mkdir(parents=True, exist_ok=True)
+
+    if mname == "default":
+        target_dir = input_dir
+        mask_path = input_dir / "mask.png"
+    else:
+        target_dir = input_dir / "masks"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        mask_path = target_dir / f"{mname}.png"
+
+    # Backup existing mask
+    if mask_path.exists():
+        import time
+        backup = target_dir / f"{mask_path.stem}.bak.{time.strftime('%Y-%m-%d_%H-%M-%S')}.png"
+        try:
+            backup.write_bytes(mask_path.read_bytes())
+        except Exception:
+            pass
+
+    try:
+        b64 = data_url.split("base64,", 1)[1]
+        raw = base64.b64decode(b64)
+        mask_path.write_bytes(raw)
+        return jsonify({"ok": True, "name": mname}), 200
+    except Exception as e:
+        return jsonify({"error": f"Failed to save mask: {e}"}), 500
+
+
 @app.route('/api/project/<project_name>/config')
 def get_project_config(project_name: str):
     """Get project configuration (rules.yaml)."""
@@ -184,6 +341,39 @@ def _safe_project_dir(project_name: str) -> Path:
     if not str(p).startswith(str(root) + "/") and p != root:
         raise ValueError("Invalid project")
     return p
+
+
+def _safe_mask_name(mask_name: str) -> str:
+    """Sanitise mask names to avoid path traversal and weird filenames."""
+    name = (mask_name or "").strip()
+    if not name:
+        return "default"
+    if name == "default":
+        return "default"
+    if not re.match(r"^[a-zA-Z0-9_-]+$", name):
+        raise ValueError("Invalid mask name")
+    return name
+
+
+def _list_project_masks(project_dir: Path) -> list[dict]:
+    """Return masks available for a project (default + named)."""
+    input_dir = project_dir / "input"
+    masks_dir = input_dir / "masks"
+    masks: list[dict] = []
+    if (input_dir / "mask.png").exists():
+        masks.append({"name": "default", "file": "input/mask.png"})
+    if masks_dir.exists():
+        for p in sorted(masks_dir.glob("*.png")):
+            try:
+                safe = _safe_mask_name(p.stem)
+            except Exception:
+                continue
+            masks.append({"name": safe, "file": f"input/masks/{p.name}"})
+    return masks
+
+
+def _working_aigen_path(project_dir: Path) -> Path:
+    return project_dir / "working" / "AIGen.yaml"
 
 
 @app.route('/api/project/<project_name>/config/rules', methods=['GET'])
@@ -252,6 +442,176 @@ def save_rules_yaml(project_name: str):
 
     rules_path.write_text(text, encoding="utf-8")
     return jsonify({"ok": True, "warnings": warnings}), 200
+
+
+def _lint_rules_obj(rules_obj: dict) -> tuple[list, list]:
+    """Run rules_checker lint if available, else return no lints."""
+    errors: list = []
+    warnings: list = []
+    try:
+        import sys
+        from pathlib import Path as _Path
+        sys.path.insert(0, str(_Path(__file__).parent.parent / "src"))
+        from rules_checker import lint_rules  # noqa: E402
+        errors, warnings = lint_rules(rules_obj)
+    except Exception:
+        errors, warnings = [], []
+    return errors, warnings
+
+
+def _render_rules_yaml(rules_obj: dict) -> str:
+    """Render rules dict to YAML (stable-ish for UI; comments are not preserved)."""
+    return yaml.safe_dump(rules_obj, default_flow_style=False, sort_keys=False, allow_unicode=True)
+
+
+@app.route('/api/project/<project_name>/config/rules_struct', methods=['GET'])
+def get_rules_struct(project_name: str):
+    """Get structured rules.yaml as JSON + mask list for UI."""
+    try:
+        project_dir = _safe_project_dir(project_name)
+    except Exception:
+        return jsonify({"error": "Invalid project"}), 400
+
+    rules_path = project_dir / "config" / "rules.yaml"
+    if not rules_path.exists():
+        return jsonify({"error": "rules.yaml not found"}), 404
+
+    try:
+        rules_obj = yaml.safe_load(rules_path.read_text(encoding="utf-8")) or {}
+        if not isinstance(rules_obj, dict):
+            return jsonify({"error": "rules.yaml must contain a mapping at top level"}), 400
+    except Exception as e:
+        return jsonify({"error": f"Failed to parse rules.yaml: {e}"}), 400
+
+    # Include masks so the UI can show valid scopes.
+    masks = _list_project_masks(project_dir)
+    errors, warnings = _lint_rules_obj(rules_obj)
+    yaml_text = _render_rules_yaml(rules_obj)
+    return jsonify({"ok": True, "rules": rules_obj, "masks": masks, "yaml": yaml_text, "errors": errors, "warnings": warnings}), 200
+
+
+@app.route('/api/project/<project_name>/config/rules_render', methods=['POST'])
+def render_rules_struct(project_name: str):
+    """Render and lint rules dict without saving (for YAML preview)."""
+    payload = request.get_json(silent=True) or {}
+    rules_obj = payload.get("rules")
+    if not isinstance(rules_obj, dict):
+        return jsonify({"error": "Expected JSON {rules: {...}}"}), 400
+
+    errors, warnings = _lint_rules_obj(rules_obj)
+    yaml_text = _render_rules_yaml(rules_obj)
+    return jsonify({"ok": True, "yaml": yaml_text, "errors": errors, "warnings": warnings}), 200
+
+
+@app.route('/api/project/<project_name>/config/rules_struct', methods=['POST'])
+def save_rules_struct(project_name: str):
+    """Save rules.yaml from a structured dict (creates backup)."""
+    payload = request.get_json(silent=True) or {}
+    rules_obj = payload.get("rules")
+    if not isinstance(rules_obj, dict):
+        return jsonify({"error": "Expected JSON {rules: {...}}"}), 400
+
+    try:
+        project_dir = _safe_project_dir(project_name)
+    except Exception:
+        return jsonify({"error": "Invalid project"}), 400
+
+    rules_path = project_dir / "config" / "rules.yaml"
+    if not rules_path.exists():
+        return jsonify({"error": "rules.yaml not found"}), 404
+
+    errors, warnings = _lint_rules_obj(rules_obj)
+    if errors:
+        return jsonify({"ok": False, "errors": errors, "warnings": warnings, "yaml": _render_rules_yaml(rules_obj)}), 400
+
+    import time
+    backup = rules_path.with_name(f"rules.yaml.bak.{time.strftime('%Y-%m-%d_%H-%M-%S')}")
+    try:
+        backup.write_text(rules_path.read_text(encoding="utf-8"), encoding="utf-8")
+    except Exception:
+        pass
+
+    rules_path.write_text(_render_rules_yaml(rules_obj), encoding="utf-8")
+    return jsonify({"ok": True, "warnings": warnings}), 200
+
+
+@app.route('/api/project/<project_name>/working/aigen/prompts', methods=['GET'])
+def get_working_aigen_prompts(project_name: str):
+    """Get current prompts from working/AIGen.yaml (positive/negative)."""
+    try:
+        project_dir = _safe_project_dir(project_name)
+    except Exception:
+        return jsonify({"error": "Invalid project"}), 400
+
+    path = _working_aigen_path(project_dir)
+    if not path.exists():
+        # If not present, fall back to config/AIGen.yaml so UI still works.
+        cfg = project_dir / "config" / "AIGen.yaml"
+        if cfg.exists():
+            path = cfg
+        else:
+            return jsonify({"error": "AIGen.yaml not found"}), 404
+
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        prompts = data.get("prompts") or {}
+        return jsonify({
+            "positive": str(prompts.get("positive") or ""),
+            "negative": str(prompts.get("negative") or ""),
+        }), 200
+    except Exception as e:
+        return jsonify({"error": f"Failed to read AIGen.yaml: {e}"}), 500
+
+
+@app.route('/api/project/<project_name>/working/aigen/prompts', methods=['POST'])
+def save_working_aigen_prompts(project_name: str):
+    """Save prompts into working/AIGen.yaml (creates timestamped backup)."""
+    payload = request.get_json(silent=True) or {}
+    positive = payload.get("positive", "")
+    negative = payload.get("negative", "")
+    if not isinstance(positive, str) or not isinstance(negative, str):
+        return jsonify({"error": "positive and negative must be strings"}), 400
+
+    try:
+        project_dir = _safe_project_dir(project_name)
+    except Exception:
+        return jsonify({"error": "Invalid project"}), 400
+
+    working_dir = project_dir / "working"
+    working_dir.mkdir(parents=True, exist_ok=True)
+    path = _working_aigen_path(project_dir)
+
+    # Ensure working/AIGen.yaml exists by copying config if needed.
+    if not path.exists():
+        cfg = project_dir / "config" / "AIGen.yaml"
+        if cfg.exists():
+            path.write_text(cfg.read_text(encoding="utf-8"), encoding="utf-8")
+        else:
+            # Minimal fallback
+            path.write_text(yaml.safe_dump({"prompts": {"positive": "", "negative": ""}}, sort_keys=False), encoding="utf-8")
+
+    # Backup existing working file
+    import time
+
+    backup = working_dir / f"AIGen.yaml.bak.{time.strftime('%Y-%m-%d_%H-%M-%S')}"
+    try:
+        backup.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+    except Exception:
+        pass
+
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        if not isinstance(data, dict):
+            data = {}
+        data.setdefault("prompts", {})
+        if not isinstance(data["prompts"], dict):
+            data["prompts"] = {}
+        data["prompts"]["positive"] = positive
+        data["prompts"]["negative"] = negative
+        path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+        return jsonify({"ok": True}), 200
+    except Exception as e:
+        return jsonify({"error": f"Failed to save AIGen.yaml: {e}"}), 500
 
 
 def _make_run_id() -> str:

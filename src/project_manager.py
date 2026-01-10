@@ -209,9 +209,13 @@ class ProjectManager:
     
     def prepare_input_image(self, input_image_path: Path, comfyui_input_dir: Path) -> str:
         """Copy input image to ComfyUI input directory and return filename."""
-        # Generate a unique filename to avoid conflicts
-        timestamp = int(time.time())
-        filename = f"iterative_imagination_{self.project_name}_{timestamp}.png"
+        # Generate a unique filename to avoid conflicts.
+        #
+        # IMPORTANT: We may copy multiple files in the same second (e.g. input.png + mask.png),
+        # so second-resolution timestamps can collide and overwrite the prior copy.
+        stamp = time.time_ns()
+        stem = (input_image_path.stem or "input").replace(" ", "_")
+        filename = f"iterative_imagination_{self.project_name}_{stem}_{stamp}.png"
         comfyui_input_path = comfyui_input_dir / filename
         
         # Copy image

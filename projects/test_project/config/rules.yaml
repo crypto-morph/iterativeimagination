@@ -1,29 +1,27 @@
 project:
   name: test_project
-  max_iterations: 20
+  max_iterations: 10
 acceptance_criteria:
 - field: clothing_style_changed
-  question: Has the person's clothing style been changed to formal business attire
-    (suit, dress shirt, tie, etc.)?
+  question: Has the person's clothing style been changed to beachwear?
   type: boolean
   min: 0
   max: 1
   intent: change
   edit_strength: high
   must_include:
-  - formal business attire
-  - suit
-  - blazer
-  - dress shirt
-  - tie
-  ban_terms:
   - bikini
   - swimsuit
   - swimwear
   - beachwear
+  ban_terms:
+  - suit
+  - blazer
+  - dress shirt
+  - tie
   avoid_terms:
-  - casual
-  - sportswear
+  - business
+  - formal business attire
 - field: person_facial_features
   question: Are the person's facial features identical to the original image?
   type: boolean

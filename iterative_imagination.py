@@ -307,17 +307,20 @@ class IterativeImagination:
             }
             return answers
     
-    def _evaluate_acceptance_criteria(self, image_path: str, question_answers: Dict) -> Dict:
-        """Evaluate image against acceptance criteria."""
+    def _evaluate_acceptance_criteria(self, image_path: str, question_answers: Dict, criteria: Optional[List[Dict]] = None) -> Dict:
+        """Evaluate image against acceptance criteria.
+
+        If `criteria` is provided, evaluate only those criteria (useful for per-mask scoped runs).
+        """
         self.logger.info("Evaluating acceptance criteria...")
-        criteria = self.rules.get('acceptance_criteria', [])
+        criteria = criteria if criteria is not None else self.rules.get('acceptance_criteria', [])
         original_desc = self._describe_original_image()
         
         evaluation = self.aivis.evaluate_acceptance_criteria(
             image_path, original_desc, criteria, question_answers
         )
         
-        # Ensure criteria_results has all fields
+        # Ensure criteria_results has all fields (for the criteria we asked for)
         criteria_results = evaluation.get('criteria_results', {})
         for criterion in criteria:
             field = criterion['field']
@@ -355,13 +358,131 @@ class IterativeImagination:
         input_filename = self.project.prepare_input_image(
             self.input_image_path, self.comfyui_input_dir
         )
+
+        # Optional mask support (single or multi-mask).
+        #
+        # Backwards compatible:
+        # - If projects/<name>/input/mask.png exists, we use it (unless masking.enabled is false).
+        #
+        # Multi-mask:
+        # - AIGen.yaml can define masking.active_mask + masking.masks to select a specific mask file.
+        # - Criteria can be scoped per mask via acceptance_criteria.applies_to_masks in rules.yaml.
+        mask_filename = None
+        active_mask_name: Optional[str] = None
+
+        mask_cfg = aigen_config.get("masking") or {}
+        try:
+            mask_enabled = bool(mask_cfg.get("enabled", True))
+        except Exception:
+            mask_enabled = True
+
+        if mask_enabled:
+            # Resolve active mask name (optional)
+            raw_active = mask_cfg.get("active_mask") or mask_cfg.get("active")
+            if isinstance(raw_active, str) and raw_active.strip():
+                active_mask_name = raw_active.strip()
+
+            # Resolve masks list (optional)
+            resolved_mask_path: Optional[Path] = None
+            masks = mask_cfg.get("masks")
+            if masks:
+                # List form: [{name, file}, ...]
+                if isinstance(masks, list):
+                    for m in masks:
+                        if not isinstance(m, dict):
+                            continue
+                        name = str(m.get("name") or "").strip()
+                        file_ = str(m.get("file") or "").strip()
+                        if not name or not file_:
+                            continue
+                        if active_mask_name and name != active_mask_name:
+                            continue
+                        candidate = Path(file_)
+                        if not candidate.is_absolute():
+                            candidate = (self.project.project_root / candidate).resolve()
+                        if candidate.exists():
+                            resolved_mask_path = candidate
+                            active_mask_name = name
+                            break
+                # Dict form: {name: file, ...}
+                elif isinstance(masks, dict):
+                    if active_mask_name and active_mask_name in masks:
+                        candidate = Path(str(masks.get(active_mask_name)))
+                        if not candidate.is_absolute():
+                            candidate = (self.project.project_root / candidate).resolve()
+                        if candidate.exists():
+                            resolved_mask_path = candidate
+                    else:
+                        # Pick first existing mask in dict (stable order in YAML)
+                        for name, file_ in masks.items():
+                            n = str(name).strip()
+                            f = str(file_).strip()
+                            if not n or not f:
+                                continue
+                            candidate = Path(f)
+                            if not candidate.is_absolute():
+                                candidate = (self.project.project_root / candidate).resolve()
+                            if candidate.exists():
+                                resolved_mask_path = candidate
+                                active_mask_name = n
+                                break
+
+            # Fallback to legacy mask.png if nothing selected
+            if resolved_mask_path is None:
+                try:
+                    legacy = self.project.project_root / "input" / "mask.png"
+                    if legacy.exists():
+                        resolved_mask_path = legacy
+                        if not active_mask_name:
+                            active_mask_name = "default"
+                except Exception:
+                    resolved_mask_path = None
+
+            if resolved_mask_path is not None:
+                try:
+                    mask_filename = self.project.prepare_input_image(resolved_mask_path, self.comfyui_input_dir)
+                except Exception:
+                    mask_filename = None
+
+        # Optional ControlNet control image (for workflows that require a separate control image input).
+        # Convention: projects/<name>/input/control.png
+        control_filename = None
+        try:
+            control_path = self.project.project_root / "input" / "control.png"
+            if control_path.exists():
+                control_filename = self.project.prepare_input_image(control_path, self.comfyui_input_dir)
+        except Exception:
+            control_filename = None
+
+        # When inpainting (mask present), allow seed to vary by default so the masked region can explore options.
+        # You can force locking via project.lock_seed_inpaint: true
+        inpaint_mode = bool(mask_filename)
+        if inpaint_mode and not bool(project_cfg.get("lock_seed_inpaint", False)):
+            lock_seed = False
         
         # Load and update workflow
+        # If a mask is present, prefer an inpaint workflow (project-local first, then defaults).
+        workflow_path = aigen_config.get("workflow_file")
+        if mask_filename:
+            # If current workflow isn't already an inpaint workflow, try switching to one.
+            wf_name = str(workflow_path or "")
+            if "inpaint" not in wf_name.lower():
+                candidate = self.project.project_root / "workflow" / "img2img_inpaint_api.json"
+                if candidate.exists():
+                    workflow_path = "workflow/img2img_inpaint_api.json"
+                else:
+                    # Fall back to repo defaults path if project doesn't have it for some reason.
+                    workflow_path = "defaults/workflow/img2img_inpaint_api.json"
+
         workflow = WorkflowManager.load_workflow(
-            aigen_config['workflow_file'], self.project.project_root
+            workflow_path, self.project.project_root
         )
         updated_workflow = WorkflowManager.update_workflow(
-            workflow, aigen_config, input_filename
+            workflow,
+            aigen_config,
+            input_filename,
+            mask_image_path=mask_filename,
+            control_image_path=control_filename,
         )
         
         # Queue workflow
@@ -421,7 +542,32 @@ class IterativeImagination:
         # Answer questions, evaluate, and compare
         questions = self._answer_questions(str(paths['image']))
         
-        evaluation = self._evaluate_acceptance_criteria(str(paths['image']), questions)
+        # If criteria are scoped per mask, only evaluate the relevant subset for this iteration.
+        all_criteria = self.rules.get('acceptance_criteria', []) or []
+        def _criteria_for_mask(criteria_defs: List[Dict], mask_name: Optional[str]) -> List[Dict]:
+            if not mask_name:
+                return criteria_defs
+            out = []
+            for c in criteria_defs:
+                if not isinstance(c, dict):
+                    continue
+                scopes = c.get("applies_to_masks") or c.get("mask_scope")
+                if not scopes:
+                    out.append(c)
+                    continue
+                if isinstance(scopes, str):
+                    scopes_list = [scopes]
+                elif isinstance(scopes, list):
+                    scopes_list = scopes
+                else:
+                    scopes_list = [str(scopes)]
+                scopes_norm = [str(x).strip() for x in scopes_list if str(x).strip()]
+                if mask_name in scopes_norm:
+                    out.append(c)
+            return out
+
+        scoped_criteria = _criteria_for_mask(all_criteria, active_mask_name)
+        evaluation = self._evaluate_acceptance_criteria(str(paths['image']), questions, criteria=scoped_criteria)
         
         score = evaluation.get('overall_score', 0)
         self.logger.info(f"Evaluation score: {score}%")
@@ -489,6 +635,10 @@ class IterativeImagination:
             "iteration": iteration_num,
             "timestamp": time.time(),
             "image_path": str(paths['image'].relative_to(self.project.project_root)),
+            "workflow_file_used": str(workflow_path),
+            "mask_used": mask_filename,
+            "active_mask": active_mask_name,
+            "control_used": control_filename,
             "parameters_used": parameters_used,
             "prompts_used": prompts_used,
             "questions": questions_clean,
@@ -520,7 +670,34 @@ class IterativeImagination:
         current_cfg = params.get('cfg', 7.0)
         
         # Improve prompts based on failed criteria (data-driven via rules.yaml tags)
-        criteria_defs = self.rules.get('acceptance_criteria', []) or []
+        #
+        # If this run is scoped to a particular mask (multi-mask projects), only consider criteria
+        # that apply to that mask (acceptance_criteria.applies_to_masks).
+        all_criteria_defs = self.rules.get('acceptance_criteria', []) or []
+        active_mask = iteration_result.get("active_mask")
+        def _criteria_for_mask(criteria_defs: List[Dict], mask_name: Optional[str]) -> List[Dict]:
+            if not mask_name:
+                return criteria_defs
+            out = []
+            for c in criteria_defs:
+                if not isinstance(c, dict):
+                    continue
+                scopes = c.get("applies_to_masks") or c.get("mask_scope")
+                if not scopes:
+                    out.append(c)
+                    continue
+                if isinstance(scopes, str):
+                    scopes_list = [scopes]
+                elif isinstance(scopes, list):
+                    scopes_list = scopes
+                else:
+                    scopes_list = [str(scopes)]
+                scopes_norm = [str(x).strip() for x in scopes_list if str(x).strip()]
+                if mask_name in scopes_norm:
+                    out.append(c)
+            return out
+
+        criteria_defs = _criteria_for_mask(all_criteria_defs, active_mask)
         criteria_by_field = {c.get('field'): c for c in criteria_defs if isinstance(c, dict) and c.get('field')}
         criteria_results = evaluation.get('criteria_results', {}) or {}
 
@@ -590,6 +767,22 @@ class IterativeImagination:
         except Exception:
             cfg_min = 4.0
 
+        # If we're *not* inpainting (no mask), cap "edit strength" more aggressively.
+        # Rationale: raising denoise on full-frame img2img causes global drift and makes targeted edits unreliable.
+        # For local edits, we want the user to provide input/mask.png so we can switch to the inpaint workflow.
+        mask_used = bool(iteration_result.get("mask_used"))
+        if not mask_used:
+            try:
+                denoise_max_no_mask = float(proj_cfg.get("denoise_max_no_mask", 0.55))
+            except Exception:
+                denoise_max_no_mask = 0.55
+            try:
+                cfg_max_no_mask = float(proj_cfg.get("cfg_max_no_mask", 9.0))
+            except Exception:
+                cfg_max_no_mask = 9.0
+            denoise_max = min(denoise_max, denoise_max_no_mask)
+            cfg_max = min(cfg_max, cfg_max_no_mask)
+
         # Heuristic: if most criteria are preserve, cap denoise/cfg harder to prevent "wandering".
         intents = [(c.get("intent") or "preserve").strip().lower() for c in criteria_defs if isinstance(c, dict)]
         n_preserve = sum(1 for x in intents if x != "change")
@@ -614,6 +807,13 @@ class IterativeImagination:
                 f"Preserve goals failing ({failed_preserve}) - decreasing denoise to {params['denoise']:.2f}, cfg to {params['cfg']:.1f}"
             )
         elif failed_change:
+            if not mask_used:
+                self.logger.warning(
+                    "Change goals are failing but no mask is in use. "
+                    "For precise edits, add projects/<name>/input/mask.png (white=edit, black=keep) "
+                    "so the runner can switch to an inpaint workflow automatically. "
+                    f"Meanwhile, keeping conservative no-mask caps: denoise<= {denoise_max:.2f}, cfg<= {cfg_max:.1f}."
+                )
             # Change failures with preserve OK: allow a bit more freedom, but keep within caps.
             max_strength = max(_strength_value(criteria_by_field[f].get('edit_strength')) for f in failed_change)
             # Bigger step size here to actually make progress on stubborn edits (e.g. removing garments).
@@ -657,6 +857,32 @@ class IterativeImagination:
                 rules_text = rules_text + self.human_feedback_context
             current_positive = aigen_config.get('prompts', {}).get('positive', '')
             current_negative = aigen_config.get('prompts', {}).get('negative', '')
+
+            def _tokenise_prompt(s: str) -> List[str]:
+                """Rough tokeniser for prompt diffs: split on commas, normalise whitespace."""
+                if not s:
+                    return []
+                parts = [p.strip() for p in str(s).split(",")]
+                out = []
+                seen = set()
+                for p in parts:
+                    if not p:
+                        continue
+                    k = p.lower()
+                    if k in seen:
+                        continue
+                    seen.add(k)
+                    out.append(p)
+                return out
+
+            def _diff_tokens(before: str, after: str) -> Dict[str, List[str]]:
+                b = _tokenise_prompt(before)
+                a = _tokenise_prompt(after)
+                bs = {x.lower() for x in b}
+                as_ = {x.lower() for x in a}
+                added = [x for x in a if x.lower() not in bs]
+                removed = [x for x in b if x.lower() not in as_]
+                return {"added": added, "removed": removed}
             
             improved_positive, improved_negative = self.aivis.improve_prompts(
                 current_positive, current_negative, evaluation, comparison,
@@ -690,6 +916,39 @@ class IterativeImagination:
             ban_terms = _dedupe(ban_terms)
             avoid_terms = _dedupe(avoid_terms)
 
+            def _prune_weird_tokens(s: str, max_chars: int = 90, max_words: int = 10) -> str:
+                """Keep prompts as short tag lists; drop sentence-like fragments."""
+                parts = [p.strip() for p in (s or "").split(",")]
+                out = []
+                for p in parts:
+                    if not p:
+                        continue
+                    # Drop sentence-y fragments and long clauses
+                    if any(ch in p for ch in (".", "!", "?", ";", ":")):
+                        continue
+                    if len(p) > max_chars:
+                        continue
+                    if len(p.split()) > max_words:
+                        continue
+                    out.append(p)
+                return ", ".join(out).strip(" ,\n")
+
+            def _filter_csv_by_terms(s: str, forbidden_terms: List[str]) -> str:
+                """Remove any comma-separated token that contains any forbidden term (substring match, catches plurals)."""
+                if not s or not forbidden_terms:
+                    return (s or "").strip(" ,\n")
+                forb = [t.strip().lower() for t in forbidden_terms if (t or "").strip()]
+                parts = [p.strip() for p in (s or "").split(",")]
+                out = []
+                for p in parts:
+                    if not p:
+                        continue
+                    pl = p.lower()
+                    if any(t in pl for t in forb):
+                        continue
+                    out.append(p)
+                return ", ".join(out).strip(" ,\n")
+
             def _remove_terms(text: str, terms: List[str]) -> str:
                 if not text or not terms:
                     return text or ""
@@ -706,6 +965,10 @@ class IterativeImagination:
                 out = re.sub(r"\s{2,}", " ", out)
                 out = re.sub(r"\s*,\s*", ", ", out)
                 return out.strip(" ,\n")
+
+            # First prune obvious garbage (long, sentence-like fragments) before tag logic.
+            improved_positive = _prune_weird_tokens(improved_positive)
+            improved_negative = _prune_weird_tokens(improved_negative)
 
             for t in avoid_terms:
                 improved_positive = re.sub(rf"\\b{re.escape(t)}\\b", "", improved_positive, flags=re.IGNORECASE)
@@ -729,8 +992,11 @@ class IterativeImagination:
             # Sanity guards to prevent contradictory prompts:
             # - must_include should not be in negative
             # - ban_terms should not be in positive
-            improved_negative = _remove_terms(improved_negative, must_include_terms)
-            improved_positive = _remove_terms(improved_positive, ban_terms)
+            # Use a substring-based filter as well to catch plurals like "swimsuits"/"bikinis".
+            improved_negative = _filter_csv_by_terms(improved_negative, must_include_terms)
+            improved_positive = _filter_csv_by_terms(improved_positive, ban_terms)
+            # Also keep avoid_terms out of positive as a stronger guard.
+            improved_positive = _filter_csv_by_terms(improved_positive, avoid_terms)
 
             # Avoid dangling "no" tokens (these can confuse the image model and encourage drift).
             def _clean_tail(s: str) -> str:
@@ -757,6 +1023,10 @@ class IterativeImagination:
                     return p
                 # Remove common broken fragments
                 p = re.sub(r"\bno\s+on\s+body\b", "", p, flags=re.IGNORECASE)
+                # Remove other unhelpful fragments we’ve seen the improver emit
+                p = re.sub(r"\bon\s+the\s+body\b", "", p, flags=re.IGNORECASE)
+                p = re.sub(r"\bon\s+body\b", "", p, flags=re.IGNORECASE)
+                p = re.sub(r"\btint\b", "", p, flags=re.IGNORECASE)
                 # Remove 'no <word>' phrases
                 p = re.sub(r"\bno\s+[a-zA-Z_]+\b", "", p, flags=re.IGNORECASE)
                 # Remove standalone 'no'
@@ -764,11 +1034,59 @@ class IterativeImagination:
                 # Normalise separators/spaces
                 p = re.sub(r"\s{2,}", " ", p)
                 p = re.sub(r"\s*,\s*", ", ", p)
+                p = re.sub(r"(,\s*){2,}", ", ", p)
                 return p.strip(" ,\n")
+
+            def _dedupe_csv(s: str) -> str:
+                parts = [p.strip() for p in (s or "").split(",")]
+                out = []
+                seen = set()
+                for p in parts:
+                    if not p:
+                        continue
+                    k = p.lower()
+                    if k in seen:
+                        continue
+                    seen.add(k)
+                    out.append(p)
+                return ", ".join(out).strip()
 
             improved_positive = _clean_tail(improved_positive)
             improved_negative = _clean_tail(improved_negative)
             improved_positive = _strip_no_phrases_from_positive(improved_positive)
+            # Strip leading negation words from negative tokens (we want raw terms, not "no X" phrases).
+            improved_negative = re.sub(r"(?i)\\b(no|not|without)\\s+", "", improved_negative).strip(" ,\n")
+            improved_positive = _dedupe_csv(improved_positive)
+            improved_negative = _dedupe_csv(improved_negative)
+
+            # Log a concise diff so it's clear what changed iteration-to-iteration.
+            try:
+                pos_diff = _diff_tokens(current_positive, improved_positive)
+                neg_diff = _diff_tokens(current_negative, improved_negative)
+                # Also show which tag-derived terms were used to shape prompts
+                if must_include_terms:
+                    self.logger.info(f"  Tag must_include terms (from failed criteria): {must_include_terms}")
+                if ban_terms:
+                    self.logger.info(f"  Tag ban_terms (from failed criteria): {ban_terms}")
+                if avoid_terms:
+                    self.logger.info(f"  Tag avoid_terms (from failed criteria): {avoid_terms}")
+
+                if pos_diff["added"] or pos_diff["removed"]:
+                    self.logger.info(f"  Positive prompt changes: +{pos_diff['added']} -{pos_diff['removed']}")
+                if neg_diff["added"] or neg_diff["removed"]:
+                    self.logger.info(f"  Negative prompt changes: +{neg_diff['added']} -{neg_diff['removed']}")
+
+                # In verbose mode, include the full before/after (trimmed to keep logs readable).
+                if self.verbose:
+                    def _trim(s: str, n: int = 500) -> str:
+                        ss = (s or "").strip()
+                        return ss if len(ss) <= n else ss[:n] + " …"
+                    self.logger.debug(f"  Positive before: {_trim(current_positive)}")
+                    self.logger.debug(f"  Positive after:  {_trim(improved_positive)}")
+                    self.logger.debug(f"  Negative before: {_trim(current_negative)}")
+                    self.logger.debug(f"  Negative after:  {_trim(improved_negative)}")
+            except Exception:
+                pass
             
             if 'prompts' not in aigen_config:
                 aigen_config['prompts'] = {}

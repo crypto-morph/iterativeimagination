@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rules UI - {{ project_name }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div style="display:flex; gap:12px; align-items:baseline; justify-content:space-between;">
+                <div>
+                    <h1>Rules UI: {{ project_name }}</h1>
+                    <p>Structured editor for <code>config/rules.yaml</code> (mask-aware acceptance criteria).</p>
+                </div>
+                <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                    <a class="btn" href="/project/{{ project_name }}/mask">Mask editor</a>
+                    <a class="btn" href="/project/{{ project_name }}/live">Live run</a>
+                    <a class="btn" href="/">Back</a>
+                </div>
+            </div>
+        </header>
+
+        <main>
+            <section class="rulesui-toolbar">
+                <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+                    <button id="btnReload" class="btn">Reload</button>
+                    <button id="btnSave" class="btn primary" disabled>Save rules.yaml</button>
+                    <span id="rulesuiStatus" class="muted"></span>
+                </div>
+                <div id="rulesuiLint" class="lint-box hidden"></div>
+            </section>
+
+            <section class="rulesui-layout" style="margin-top:14px;">
+                <aside class="rulesui-left">
+                    <h3>Scope</h3>
+                    <div class="muted" style="margin-top:6px;">Select a scope, then drag cards between Change/Preserve.</div>
+                    <div id="scopeList" class="scope-list" style="margin-top:10px;"></div>
+
+                    <h3 style="margin-top:14px;">Project settings</h3>
+                    <div class="form-grid">
+                        <label class="muted">Max iterations
+                            <input id="projMaxIterations" type="number" min="1" max="50" value="20">
+                        </label>
+                        <label class="muted">Preserve heavy
+                            <select id="projPreserveHeavy">
+                                <option value="auto">auto</option>
+                                <option value="true">true</option>
+                                <option value="false">false</option>
+                            </select>
+                        </label>
+                        <label class="muted">Lock seed
+                            <select id="projLockSeed">
+                                <option value="true">true</option>
+                                <option value="false">false</option>
+                            </select>
+                        </label>
+                    </div>
+                </aside>
+
+                <section class="rulesui-main">
+                    <div class="board">
+                        <div class="board-col" data-intent="change">
+                            <div class="board-col-header">
+                                <h3>Change goals</h3>
+                                <div class="muted">Drag criteria here</div>
+                            </div>
+                            <div id="colChange" class="board-col-body dropzone"></div>
+                        </div>
+                        <div class="board-col" data-intent="preserve">
+                            <div class="board-col-header">
+                                <h3>Preserve goals</h3>
+                                <div class="muted">Drag criteria here</div>
+                            </div>
+                            <div id="colPreserve" class="board-col-body dropzone"></div>
+                        </div>
+                    </div>
+
+                    <div style="margin-top:14px;">
+                        <h3>Questions</h3>
+                        <div id="questionsList" class="questions-list muted" style="margin-top:8px;"></div>
+                    </div>
+                </section>
+
+                <aside class="rulesui-right">
+                    <h3>Criterion details</h3>
+                    <div id="criterionEmpty" class="muted" style="margin-top:8px;">Click a criterion card to edit it.</div>
+                    <div id="criterionEditor" class="hidden">
+                        <div class="muted">Field</div>
+                        <div id="critField" class="mono" style="margin:6px 0 10px 0;"></div>
+
+                        <label class="muted">Question
+                            <textarea id="critQuestion" class="code-textarea" style="min-height:80px;"></textarea>
+                        </label>
+                        <div class="form-grid" style="margin-top:10px;">
+                            <label class="muted">Intent
+                                <select id="critIntent">
+                                    <option value="change">change</option>
+                                    <option value="preserve">preserve</option>
+                                </select>
+                            </label>
+                            <label class="muted">Edit strength
+                                <select id="critStrength">
+                                    <option value="low">low</option>
+                                    <option value="medium">medium</option>
+                                    <option value="high">high</option>
+                                </select>
+                            </label>
+                        </div>
+
+                        <div style="margin-top:10px;">
+                            <div class="muted">Applies to masks</div>
+                            <div id="critScopes" class="scope-chips" style="margin-top:6px;"></div>
+                        </div>
+
+                        <label class="muted" style="margin-top:10px;">must_include (one per line)
+                            <textarea id="critMust" class="code-textarea" style="min-height:90px;"></textarea>
+                        </label>
+                        <label class="muted" style="margin-top:10px;">ban_terms (one per line)
+                            <textarea id="critBan" class="code-textarea" style="min-height:90px;"></textarea>
+                        </label>
+                        <label class="muted" style="margin-top:10px;">avoid_terms (one per line)
+                            <textarea id="critAvoid" class="code-textarea" style="min-height:90px;"></textarea>
+                        </label>
+                    </div>
+
+                    <h3 style="margin-top:14px;">YAML preview</h3>
+                    <textarea id="yamlPreview" class="code-textarea" readonly style="min-height:260px;"></textarea>
+                </aside>
+            </section>
+        </main>
+    </div>
+
+    <script>
+        window.__RULESUI_PROJECT__ = "{{ project_name }}";
+    </script>
+    <script src="{{ url_for('static', filename='js/rules_ui.js') }}"></script>
+</body>
+</html>
+

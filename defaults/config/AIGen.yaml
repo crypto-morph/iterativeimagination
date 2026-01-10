@@ -6,6 +6,9 @@ workflow_file: "defaults/workflow/img2img_no_mask_api.json"
 
 model:
   ckpt_name: "realisticVisionV60B1_v51VAE.safetensors"
+  # Optional: checkpoint to use automatically when inpainting (i.e. when a mask.png is present).
+  # If omitted, ckpt_name is used for both normal img2img and inpainting.
+  # ckpt_name_inpaint: "realisticVisionV60B1_v51VAE-inpainting.safetensors"
 
 comfyui:
   host: "localhost"
@@ -22,3 +25,17 @@ parameters:
 prompts:
   positive: ""
   negative: ""
+
+# Optional: control whether the runner uses projects/<name>/input/mask.png (inpainting).
+# This is useful for A/B testing workflows without deleting/renaming the mask file.
+masking:
+  enabled: true
+  # Optional: for multi-mask projects you can select a named mask:
+  # active_mask: left
+  # masks:
+  #   - name: left
+  #     file: input/masks/left.png
+  #   - name: middle
+  #     file: input/masks/middle.png
+  #   - name: right
+  #     file: input/masks/right.png

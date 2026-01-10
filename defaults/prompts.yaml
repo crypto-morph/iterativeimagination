@@ -107,11 +107,13 @@ improve_prompts: |
   
   Important constraints:
   1. The rules are authoritative. Optimise the prompts to satisfy the failed criteria first.
-  2. If the goal involves changing clothing style (for example to formal business attire), then:
-     - The positive prompt must describe the target clothing only (for example suit, blazer, dress shirt, tie).
-     - The negative prompt must explicitly ban the original clothing (for example bikini, swimsuit, swimwear).
-     - Do not include contradictory clothing instructions in the positive prompt.
+  2. Use the tags provided in the rules:
+     - Ensure all must_include terms appear in the positive prompt.
+     - Ensure all ban_terms appear in the negative prompt.
+     - Do NOT put must_include terms (or obvious variants/plurals) into the negative prompt.
+     - Do NOT put ban_terms (or obvious variants/plurals) into the positive prompt.
   3. Preserve identity, pose, background, and body proportions when asked, by describing them explicitly in the positive prompt.
+  4. Output prompts as short, comma-separated tags/phrases only. Do NOT output full sentences, and do NOT use negations like "no X" or "not X" (negations belong in the negative prompt as plain terms).
 
   Suggest improved positive and negative prompts that:
   1. Address the failed criteria

@@ -15,6 +15,8 @@
                     <p>One iteration at a time, with human feedback between iterations.</p>
                 </div>
                 <div>
+                    <a class="btn" href="/project/{{ project_name }}/mask">Mask editor</a>
+                    <a class="btn" href="/project/{{ project_name }}/rulesui">Rules UI</a>
                     <a class="btn" href="/">Back</a>
                 </div>
             </div>
@@ -50,6 +52,30 @@
                 <div class="muted" style="margin-top:8px;">
                     Saving creates a backup alongside the file: <code>rules.yaml.bak.&lt;timestamp&gt;</code>.
                     Live runs re-load rules before each iteration.
+                </div>
+            </section>
+
+            <section class="rules-editor" style="margin-top:16px;">
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+                    <h3 style="margin:0;">Prompt editor (`working/AIGen.yaml` → prompts)</h3>
+                    <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                        <button id="loadPromptsBtn" class="btn">Load prompts</button>
+                        <button id="savePromptsBtn" class="btn primary" disabled>Save prompts</button>
+                    </div>
+                </div>
+                <div id="promptsStatus" class="muted" style="margin-top:8px;"></div>
+                <div class="prompt-grid">
+                    <div>
+                        <div class="muted" style="margin:8px 0;">Positive prompt</div>
+                        <textarea id="positivePromptBox" class="code-textarea" placeholder="Positive prompt..."></textarea>
+                    </div>
+                    <div>
+                        <div class="muted" style="margin:8px 0;">Negative prompt</div>
+                        <textarea id="negativePromptBox" class="code-textarea" placeholder="Negative prompt..."></textarea>
+                    </div>
+                </div>
+                <div class="muted" style="margin-top:8px;">
+                    Saving writes to <code>working/AIGen.yaml</code> and creates a backup: <code>AIGen.yaml.bak.&lt;timestamp&gt;</code>.
                 </div>
             </section>
 
