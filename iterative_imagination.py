@@ -1366,6 +1366,22 @@ class IterativeImagination:
             improved_positive = _filter_csv_by_terms(improved_positive, ban_terms)
             # Also keep avoid_terms out of positive as a stronger guard.
             improved_positive = _filter_csv_by_terms(improved_positive, avoid_terms)
+            
+            # Aggressive filter: if we have change-intent criteria with must_include terms,
+            # remove any contradictory clothing terms from positive that match ban_terms or common opposites.
+            # This prevents the AI from adding "formal business attire" when we want "snowsuit".
+            if change_must_include:
+                # Build a list of terms to aggressively remove from positive
+                contradictory_terms = list(ban_terms)  # Start with explicit ban_terms
+                # Add common business/formal clothing terms if we're changing to casual/outdoor wear
+                change_terms_lower = [str(t).strip().lower() for t in change_must_include]
+                if any("snowsuit" in t or "swimsuit" in t or "bikini" in t or "hawaiian" in t or "coconut" in t for t in change_terms_lower):
+                    contradictory_terms.extend([
+                        "formal business attire", "business suit", "business attire", "formal attire",
+                        "suit", "blazer", "dress shirt", "tie", "professional attire", "corporate attire"
+                    ])
+                # Remove these from positive
+                improved_positive = _filter_csv_by_terms(improved_positive, contradictory_terms)
 
             # Avoid dangling "no" tokens (these can confuse the image model and encourage drift).
             def _clean_tail(s: str) -> str:
