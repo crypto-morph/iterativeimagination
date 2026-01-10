@@ -948,11 +948,16 @@ class IterativeImagination:
         # Capture prompts used for this iteration
         prompts_used = aigen_config.get('prompts', {}).copy()
         
+        # Get checkpoint info from workflow metadata
+        wf_meta = updated_workflow.get("_workflow_metadata", {})
+        ckpt_used = wf_meta.get("checkpoint_used", "unknown")
+        
         metadata = {
             "iteration": iteration_num,
             "timestamp": time.time(),
             "image_path": str(paths['image'].relative_to(self.project.project_root)),
             "workflow_file_used": str(workflow_path),
+            "checkpoint_used": ckpt_used,
             "mask_used": mask_filename,
             "active_mask": active_mask_name,
             "control_used": control_filename,
