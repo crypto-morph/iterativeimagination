@@ -1,63 +1,117 @@
-project:
-  name: test_project
-  max_iterations: 10
 acceptance_criteria:
-- field: clothing_style_changed
-  question: Has the person's clothing style been changed to beachwear?
-  type: boolean
-  min: 0
-  max: 1
-  intent: change
-  edit_strength: high
-  must_include:
-  - bikini
-  - swimsuit
-  - swimwear
-  - beachwear
-  ban_terms:
-  - suit
-  - blazer
-  - dress shirt
-  - tie
-  avoid_terms:
-  - business
-  - formal business attire
-- field: person_facial_features
-  question: Are the person's facial features identical to the original image?
-  type: boolean
-  min: 0
-  max: 1
+- edit_strength: high
+  field: person_facial_features
   intent: preserve
-  edit_strength: high
+  max: 1
+  min: 0
   must_include:
   - identical facial features
-- field: person_pose
-  question: Is the person's pose identical to the original image?
+  question: Are the person's facial features identical to the original image?
   type: boolean
-  min: 0
-  max: 1
+- edit_strength: medium
+  field: person_pose
   intent: preserve
-  edit_strength: medium
+  max: 1
+  min: 0
   must_include:
   - same pose
-- field: background_identical
-  question: Is the background identical to the original image?
+  question: Is the person's pose identical to the original image?
   type: boolean
-  min: 0
-  max: 1
+- edit_strength: medium
+  field: background_identical
   intent: preserve
-  edit_strength: medium
+  max: 1
+  min: 0
   must_include:
   - identical background
-- field: person_body_proportions
-  question: Are the person's body proportions identical to the original image?
+  question: Is the background identical to the original image?
   type: boolean
-  min: 0
-  max: 1
+- edit_strength: medium
+  field: person_body_proportions
   intent: preserve
-  edit_strength: medium
+  max: 1
+  min: 0
   must_include:
   - identical body proportions
+  question: Are the person's body proportions identical to the original image?
+  type: boolean
+- avoid_terms: []
+  ban_terms:
+  - business suit
+  - shirt
+  edit_strength: medium
+  field: left_outfit
+  intent: change
+  max: 1
+  min: 0
+  must_include:
+  - snowsuit
+  question: Is this person wearing a snowsuit
+  type: boolean
+- avoid_terms: []
+  ban_terms:
+  - business suit
+  - shirt
+  edit_strength: medium
+  field: middle_outfit
+  intent: change
+  max: 1
+  min: 0
+  must_include:
+  - hawaiian skirt
+  - coconut bra
+  question: does this person wear a hawaiian skirt and coconut bra?
+  type: boolean
+- avoid_terms: []
+  ban_terms:
+  - business suit
+  - shirt
+  edit_strength: medium
+  field: right_outfit
+  intent: change
+  max: 1
+  min: 0
+  must_include:
+  - bikini
+  question: Is this person wearing a bikini?
+  type: boolean
+masking:
+  masks:
+  - name: default
+    active_criteria:
+    - person_facial_features
+    - person_pose
+    - background_identical
+    - person_body_proportions
+  - name: left
+    active_criteria:
+    - left_outfit
+    - person_facial_features
+    - person_pose
+    - background_identical
+    - person_body_proportions
+  - name: middle
+    active_criteria:
+    - middle_outfit
+    - person_facial_features
+    - person_pose
+    - person_body_proportions
+    - background_identical
+  - name: right
+    active_criteria:
+    - right_outfit
+    - person_facial_features
+    - person_pose
+    - background_identical
+    - person_body_proportions
+project:
+  max_iterations: 10
+  name: test_project
+prompts:
+  global:
+    positive: ''
+    negative: ''
+  masks: {}
 questions:
 - field: person_clothing_description
   question: Describe the person's clothing in detail. What type of garments are they
@@ -68,52 +122,52 @@ questions:
     tie, formal dress, blazer, etc.)
   type: string
 - field: clothing_style_confidence
+  max: 1
+  min: 0
   question: Confidence in clothing style assessment
   type: number
-  min: 0
-  max: 1
 - field: facial_features_comparison
   question: Compare the facial features (eyes, nose, mouth, face shape) between the
     generated and original image. Describe any differences.
   type: string
 - field: facial_features_similarity
+  max: 1
+  min: 0
   question: Rate the similarity of facial features (0.0 = completely different, 1.0
     = identical)
   type: number
-  min: 0
-  max: 1
 - field: pose_comparison
   question: Compare the person's pose (body position, limb placement, orientation)
     between the generated and original image. Describe any differences.
   type: string
 - field: pose_similarity
+  max: 1
+  min: 0
   question: Rate the similarity of the pose (0.0 = completely different, 1.0 = identical)
   type: number
-  min: 0
-  max: 1
 - field: background_comparison
   question: Compare the background elements between the generated and original image.
     Describe any differences.
   type: string
 - field: background_similarity
+  max: 1
+  min: 0
   question: Rate the similarity of the background (0.0 = completely different, 1.0
     = identical)
   type: number
-  min: 0
-  max: 1
 - field: body_proportions_comparison
   question: Compare the body proportions (height, width, limb lengths, head size relative
     to body) between the generated and original image. Describe any differences.
   type: string
 - field: body_proportions_similarity
+  max: 1
+  min: 0
   question: Rate the similarity of body proportions (0.0 = completely different, 1.0
     = identical)
   type: number
-  min: 0
-  max: 1
 - field: overall_image_difference
+  max: 1
+  min: 0
   question: Overall, how different is the generated image from the original? (0.0
     = identical, 1.0 = completely different)
   type: number
-  min: 0
-  max: 1
