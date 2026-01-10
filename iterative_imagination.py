@@ -710,7 +710,7 @@ class IterativeImagination:
             control_image_path=control_filename,
         )
         
-        # Log checkpoint info
+        # Log checkpoint info (extract before removing metadata)
         wf_meta = updated_workflow.get("_workflow_metadata", {})
         ckpt_used = wf_meta.get("checkpoint_used", "unknown")
         ckpt_switched = wf_meta.get("checkpoint_switched", False)
@@ -719,9 +719,12 @@ class IterativeImagination:
         else:
             self.logger.info(f"Using checkpoint: {ckpt_used}")
         
+        # Remove metadata before sending to ComfyUI (it doesn't understand our custom fields)
+        workflow_for_comfyui = {k: v for k, v in updated_workflow.items() if k != "_workflow_metadata"}
+        
         # Queue workflow
         try:
-            prompt_id = self.comfyui.queue_prompt(updated_workflow)
+            prompt_id = self.comfyui.queue_prompt(workflow_for_comfyui)
             self.logger.info(f"Prompt ID: {prompt_id}")
         except Exception as e:
             self.logger.error(f"Failed to queue workflow: {e}")
@@ -948,9 +951,8 @@ class IterativeImagination:
         # Capture prompts used for this iteration
         prompts_used = aigen_config.get('prompts', {}).copy()
         
-        # Get checkpoint info from workflow metadata
-        wf_meta = updated_workflow.get("_workflow_metadata", {})
-        ckpt_used = wf_meta.get("checkpoint_used", "unknown")
+        # Get checkpoint info from workflow metadata (we already extracted it earlier)
+        # Use the ckpt_used we extracted before removing metadata
         
         metadata = {
             "iteration": iteration_num,
