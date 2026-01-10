@@ -45,8 +45,8 @@ acceptance_criteria:
   max: 1
   min: 0
   must_include:
-  - snowsuit
-  question: Is this person wearing a snowsuit
+  - lady wearing snowsuit
+  question: Is this person wearing a snowsuit?
   type: boolean
 - avoid_terms: []
   ban_terms:
@@ -109,9 +109,22 @@ project:
   name: test_project
 prompts:
   global:
-    positive: ''
     negative: ''
-  masks: {}
+    positive: ''
+  masks:
+    default:
+      negative: ''
+      positive: ''
+    left:
+      negative: snowsuit, business suit, shirt, different facial features, different
+        pose, different body proportions
+      positive: three women in a professional setting, modern office, identical facial
+        features, same pose, identical body proportions, snowsuit, identical background
+    middle:
+      positive: professional setting, three women, midline, formal attire, identical
+        facial features, same pose, identical body proportions, background identical,
+        modern office, large window, natural light
+      negative: hawaiian skirt, coconut bra, business suit, shirt
 questions:
 - field: person_clothing_description
   question: Describe the person's clothing in detail. What type of garments are they

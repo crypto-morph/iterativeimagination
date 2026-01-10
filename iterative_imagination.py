@@ -567,13 +567,43 @@ class IterativeImagination:
         if not cur_pos or not cur_neg:
             scope_for_prompts = active_mask_name if active_mask_name else None
             base_pos, base_neg = self._get_rules_base_prompts(scope_for_prompts)
+            
+            # Validate: reject prompts that look like field names (snake_case identifiers matching criterion fields).
+            def _looks_like_field_names(text: str) -> bool:
+                """Detect if prompt text is just field names instead of actual SD tags."""
+                if not text:
+                    return False
+                # Get all criterion field names
+                all_fields = {str(c.get("field", "")).strip() for c in (self.rules.get("acceptance_criteria") or []) if isinstance(c, dict)}
+                # Check if the prompt is mostly/entirely field names
+                words = [w.strip().lower() for w in text.replace(",", " ").split() if w.strip()]
+                if not words:
+                    return False
+                # If >50% of words match field names, it's probably field names
+                matches = sum(1 for w in words if w in all_fields or w.replace("not_", "") in all_fields)
+                return matches > len(words) * 0.5
+            
             changed = False
             if not cur_pos and (base_pos or "").strip():
-                prompts_cfg["positive"] = base_pos
-                changed = True
+                if _looks_like_field_names(base_pos):
+                    self.logger.warning(
+                        f"Rejected rules.yaml base prompt (positive) - it contains field names, not SD tags. "
+                        f"Use 'Generate base prompts' in Rules UI to create proper prompts. "
+                        f"Found: {base_pos[:80]}"
+                    )
+                else:
+                    prompts_cfg["positive"] = base_pos
+                    changed = True
             if not cur_neg and (base_neg or "").strip():
-                prompts_cfg["negative"] = base_neg
-                changed = True
+                if _looks_like_field_names(base_neg):
+                    self.logger.warning(
+                        f"Rejected rules.yaml base prompt (negative) - it contains field names, not SD tags. "
+                        f"Use 'Generate base prompts' in Rules UI to create proper prompts. "
+                        f"Found: {base_neg[:80]}"
+                    )
+                else:
+                    prompts_cfg["negative"] = base_neg
+                    changed = True
             if changed:
                 aigen_config["prompts"] = prompts_cfg
                 try:
