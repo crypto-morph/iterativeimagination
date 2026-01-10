@@ -1640,10 +1640,14 @@ class IterativeImagination:
                     contradictory_terms.extend([
                         "formal business attire", "business suit", "business attire", "formal attire",
                         "suit", "blazer", "dress shirt", "tie", "professional attire", "corporate attire",
-                        "black blazer", "dark blue blazer", "gray blazer", "blue blazer", "navy blazer"
+                        "black blazer", "dark blue blazer", "gray blazer", "blue blazer", "navy blazer",
+                        "dark blazer", "light blazer", "blazers", "suit jacket", "jacket"
                     ])
-                # Remove these from positive
+                # Remove these from positive (run this filter multiple times to catch all variations)
                 improved_positive = _filter_csv_by_terms(improved_positive, contradictory_terms)
+                # Run again to catch any remaining variations
+                improved_positive = _filter_csv_by_terms(improved_positive, contradictory_terms)
+                self.logger.info(f"  Removed contradictory clothing terms (casual wear mode): {len(contradictory_terms)} terms")
 
             # Avoid dangling "no" tokens (these can confuse the image model and encourage drift).
             def _clean_tail(s: str) -> str:
