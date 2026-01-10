@@ -915,6 +915,88 @@ def save_rules_yaml(project_name: str):
     return jsonify({"ok": True, "warnings": warnings}), 200
 
 
+@app.route('/api/project/<project_name>/config/aigen', methods=['GET'])
+def get_aigen_yaml(project_name: str):
+    """Get raw config/AIGen.yaml text."""
+    try:
+        project_dir = _safe_project_dir(project_name)
+    except Exception:
+        return jsonify({"error": "Invalid project"}), 400
+    path = project_dir / "config" / "AIGen.yaml"
+    if not path.exists():
+        return jsonify({"error": "AIGen.yaml not found"}), 404
+    return Response(path.read_text(encoding="utf-8"), mimetype="text/plain")
+
+
+@app.route('/api/project/<project_name>/config/aigen', methods=['POST'])
+def save_aigen_yaml(project_name: str):
+    """Save raw config/AIGen.yaml text (validates YAML)."""
+    payload = request.get_json(silent=True) or {}
+    text = payload.get("text")
+    if not isinstance(text, str) or not text.strip():
+        return jsonify({"error": "Missing AIGen.yaml text"}), 400
+    try:
+        project_dir = _safe_project_dir(project_name)
+    except Exception:
+        return jsonify({"error": "Invalid project"}), 400
+    path = project_dir / "config" / "AIGen.yaml"
+    if not path.exists():
+        return jsonify({"error": "AIGen.yaml not found"}), 404
+    try:
+        yaml.safe_load(text)
+    except Exception as e:
+        return jsonify({"error": f"YAML parse error: {e}"}), 400
+    import time
+    backup = path.with_name(f"AIGen.yaml.bak.{time.strftime('%Y-%m-%d_%H-%M-%S')}")
+    try:
+        backup.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+    except Exception:
+        pass
+    path.write_text(text, encoding="utf-8")
+    return jsonify({"ok": True}), 200
+
+
+@app.route('/api/project/<project_name>/config/aivis', methods=['GET'])
+def get_aivis_yaml(project_name: str):
+    """Get raw config/AIVis.yaml text."""
+    try:
+        project_dir = _safe_project_dir(project_name)
+    except Exception:
+        return jsonify({"error": "Invalid project"}), 400
+    path = project_dir / "config" / "AIVis.yaml"
+    if not path.exists():
+        return jsonify({"error": "AIVis.yaml not found"}), 404
+    return Response(path.read_text(encoding="utf-8"), mimetype="text/plain")
+
+
+@app.route('/api/project/<project_name>/config/aivis', methods=['POST'])
+def save_aivis_yaml(project_name: str):
+    """Save raw config/AIVis.yaml text (validates YAML)."""
+    payload = request.get_json(silent=True) or {}
+    text = payload.get("text")
+    if not isinstance(text, str) or not text.strip():
+        return jsonify({"error": "Missing AIVis.yaml text"}), 400
+    try:
+        project_dir = _safe_project_dir(project_name)
+    except Exception:
+        return jsonify({"error": "Invalid project"}), 400
+    path = project_dir / "config" / "AIVis.yaml"
+    if not path.exists():
+        return jsonify({"error": "AIVis.yaml not found"}), 404
+    try:
+        yaml.safe_load(text)
+    except Exception as e:
+        return jsonify({"error": f"YAML parse error: {e}"}), 400
+    import time
+    backup = path.with_name(f"AIVis.yaml.bak.{time.strftime('%Y-%m-%d_%H-%M-%S')}")
+    try:
+        backup.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+    except Exception:
+        pass
+    path.write_text(text, encoding="utf-8")
+    return jsonify({"ok": True}), 200
+
+
 def _lint_rules_obj(rules_obj: dict) -> tuple[list, list]:
     """Run rules_checker lint if available, else return no lints."""
     errors: list = []

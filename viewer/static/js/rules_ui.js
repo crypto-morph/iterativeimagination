@@ -10,6 +10,12 @@ function setStatus(text) {
   $("rulesuiStatus").textContent = text || "";
 }
 
+function setTextStatus(id, text) {
+  const el = $(id);
+  if (!el) return;
+  el.textContent = text || "";
+}
+
 function openYamlModal() {
   const m = $("yamlModal");
   m.classList.remove("hidden");
@@ -687,6 +693,117 @@ function wire() {
   $("btnCloseYaml").addEventListener("click", closeYamlModal);
   $("yamlBackdrop").addEventListener("click", closeYamlModal);
   $("btnCopyYaml").addEventListener("click", copyYaml);
+
+  // Advanced: working prompts
+  const wpPos = $("workingPromptPositive");
+  const wpNeg = $("workingPromptNegative");
+  const btnLoadWP = $("btnLoadWorkingPrompts");
+  const btnSaveWP = $("btnSaveWorkingPrompts");
+  async function loadWorkingPrompts() {
+    setTextStatus("workingPromptsStatus", "Loading...");
+    const res = await fetch(`/api/project/${project}/working/aigen/prompts`, { cache: "no-store" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setTextStatus("workingPromptsStatus", data.error || "Failed to load.");
+      return;
+    }
+    wpPos.value = data.positive || "";
+    wpNeg.value = data.negative || "";
+    btnSaveWP.disabled = true;
+    setTextStatus("workingPromptsStatus", "Loaded.");
+  }
+  async function saveWorkingPrompts() {
+    btnSaveWP.disabled = true;
+    setTextStatus("workingPromptsStatus", "Saving...");
+    const res = await fetch(`/api/project/${project}/working/aigen/prompts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ positive: wpPos.value || "", negative: wpNeg.value || "" })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setTextStatus("workingPromptsStatus", data.error || "Save failed.");
+      return;
+    }
+    setTextStatus("workingPromptsStatus", "Saved to working/AIGen.yaml.");
+  }
+  if (btnLoadWP) btnLoadWP.addEventListener("click", loadWorkingPrompts);
+  if (btnSaveWP) btnSaveWP.addEventListener("click", saveWorkingPrompts);
+  if (wpPos) wpPos.addEventListener("input", () => { btnSaveWP.disabled = false; });
+  if (wpNeg) wpNeg.addEventListener("input", () => { btnSaveWP.disabled = false; });
+
+  // Advanced: config/AIGen.yaml editor
+  const aigenBox = $("aigenCfgBox");
+  const btnLoadAigen = $("btnLoadAigenCfg");
+  const btnSaveAigen = $("btnSaveAigenCfg");
+  async function loadAigenCfg() {
+    setTextStatus("aigenCfgStatus", "Loading...");
+    const res = await fetch(`/api/project/${project}/config/aigen`, { cache: "no-store" });
+    const text = await res.text().catch(() => "");
+    if (!res.ok) {
+      setTextStatus("aigenCfgStatus", text || "Failed to load.");
+      return;
+    }
+    aigenBox.value = text || "";
+    btnSaveAigen.disabled = true;
+    setTextStatus("aigenCfgStatus", "Loaded.");
+  }
+  async function saveAigenCfg() {
+    btnSaveAigen.disabled = true;
+    setTextStatus("aigenCfgStatus", "Saving...");
+    const res = await fetch(`/api/project/${project}/config/aigen`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: aigenBox.value || "" })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setTextStatus("aigenCfgStatus", data.error || "Save failed.");
+      btnSaveAigen.disabled = false;
+      return;
+    }
+    setTextStatus("aigenCfgStatus", "Saved config/AIGen.yaml.");
+  }
+  if (btnLoadAigen) btnLoadAigen.addEventListener("click", loadAigenCfg);
+  if (btnSaveAigen) btnSaveAigen.addEventListener("click", saveAigenCfg);
+  if (aigenBox) aigenBox.addEventListener("input", () => { btnSaveAigen.disabled = false; });
+
+  // Advanced: config/AIVis.yaml editor
+  const aivisBox = $("aivisCfgBox");
+  const btnLoadAiVis = $("btnLoadAiVisCfg");
+  const btnSaveAiVis = $("btnSaveAiVisCfg");
+  async function loadAiVisCfg() {
+    setTextStatus("aivisCfgStatus", "Loading...");
+    const res = await fetch(`/api/project/${project}/config/aivis`, { cache: "no-store" });
+    const text = await res.text().catch(() => "");
+    if (!res.ok) {
+      setTextStatus("aivisCfgStatus", text || "Failed to load.");
+      return;
+    }
+    aivisBox.value = text || "";
+    btnSaveAiVis.disabled = true;
+    setTextStatus("aivisCfgStatus", "Loaded.");
+  }
+  async function saveAiVisCfg() {
+    btnSaveAiVis.disabled = true;
+    setTextStatus("aivisCfgStatus", "Saving...");
+    const res = await fetch(`/api/project/${project}/config/aivis`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: aivisBox.value || "" })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setTextStatus("aivisCfgStatus", data.error || "Save failed.");
+      btnSaveAiVis.disabled = false;
+      return;
+    }
+    setTextStatus("aivisCfgStatus", "Saved config/AIVis.yaml.");
+  }
+  if (btnLoadAiVis) btnLoadAiVis.addEventListener("click", loadAiVisCfg);
+  if (btnSaveAiVis) btnSaveAiVis.addEventListener("click", saveAiVisCfg);
+  if (aivisBox) aivisBox.addEventListener("input", () => { btnSaveAiVis.disabled = false; });
+
   const btnCreate = $("btnCreateMaskRulesUI");
   if (btnCreate) {
     btnCreate.addEventListener("click", () => {

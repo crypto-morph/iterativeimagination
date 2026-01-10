@@ -103,6 +103,51 @@
                             <textarea id="scopePromptNegative" class="code-textarea" readonly style="min-height:90px;"></textarea>
                         </label>
                     </details>
+
+                    <details class="rulesui-details" style="margin-top:12px;">
+                        <summary>Advanced: working prompts</summary>
+                        <div class="muted" style="margin-top:6px;">
+                            These edit <code>working/AIGen.yaml</code> prompts (what ComfyUI uses during a run).
+                            If you are using base prompts from <code>rules.yaml</code>, leave working prompts blank and regenerate base prompts instead.
+                        </div>
+                        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+                            <button id="btnLoadWorkingPrompts" class="btn">Load working prompts</button>
+                            <button id="btnSaveWorkingPrompts" class="btn primary" disabled>Save working prompts</button>
+                            <span id="workingPromptsStatus" class="muted"></span>
+                        </div>
+                        <label class="muted" style="margin-top:10px; display:block;">Positive
+                            <textarea id="workingPromptPositive" class="code-textarea" style="min-height:90px;"></textarea>
+                        </label>
+                        <label class="muted" style="margin-top:10px; display:block;">Negative
+                            <textarea id="workingPromptNegative" class="code-textarea" style="min-height:90px;"></textarea>
+                        </label>
+                    </details>
+
+                    <details class="rulesui-details" style="margin-top:12px;">
+                        <summary>Advanced: AIGen.yaml (engine config)</summary>
+                        <div class="muted" style="margin-top:6px;">
+                            This edits <code>config/AIGen.yaml</code> (defaults for new runs). The runner still writes iteration changes into <code>working/AIGen.yaml</code>.
+                        </div>
+                        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+                            <button id="btnLoadAigenCfg" class="btn">Load AIGen.yaml</button>
+                            <button id="btnSaveAigenCfg" class="btn primary" disabled>Save AIGen.yaml</button>
+                            <span id="aigenCfgStatus" class="muted"></span>
+                        </div>
+                        <textarea id="aigenCfgBox" class="code-textarea" placeholder="Click 'Load AIGen.yaml' to edit..." style="min-height:200px;"></textarea>
+                    </details>
+
+                    <details class="rulesui-details" style="margin-top:12px;">
+                        <summary>Advanced: AIVis.yaml (vision config)</summary>
+                        <div class="muted" style="margin-top:6px;">
+                            This edits <code>config/AIVis.yaml</code>. Prefer using environment variables for API keys.
+                        </div>
+                        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+                            <button id="btnLoadAiVisCfg" class="btn">Load AIVis.yaml</button>
+                            <button id="btnSaveAiVisCfg" class="btn primary" disabled>Save AIVis.yaml</button>
+                            <span id="aivisCfgStatus" class="muted"></span>
+                        </div>
+                        <textarea id="aivisCfgBox" class="code-textarea" placeholder="Click 'Load AIVis.yaml' to edit..." style="min-height:160px;"></textarea>
+                    </details>
                 </aside>
 
                 <section class="rulesui-main">
