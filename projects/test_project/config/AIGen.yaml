@@ -9,8 +9,8 @@ comfyui:
   port: 8188
 # Note: AIVis configuration has been moved to AIVis.yaml
 parameters:
-  denoise: 0.5
-  cfg: 7.0
+  denoise: 0.95
+  cfg: 12.0
   steps: 25
   seed: null
   sampler_name: dpmpp_2m
