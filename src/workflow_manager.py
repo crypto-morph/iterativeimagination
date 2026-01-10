@@ -50,7 +50,7 @@ class WorkflowManager:
         
         if not workflow_file.exists():
             raise FileNotFoundError(f"Workflow file not found: {workflow_path} (tried: {workflow_file})")
-
+        
         suffix = workflow_file.suffix.lower()
         if suffix == ".json":
             with open(workflow_file, 'r', encoding='utf-8') as f:
@@ -206,21 +206,21 @@ class WorkflowManager:
             inputs = node_data.get("inputs")
             if not isinstance(inputs, dict):
                 continue
-            if 'denoise' in params:
-                inputs['denoise'] = params['denoise']
-            if 'cfg' in params:
-                inputs['cfg'] = params['cfg']
-            if 'steps' in params:
-                inputs['steps'] = params['steps']
-            if 'seed' in params and params['seed'] is not None:
-                inputs['seed'] = params['seed']
-            else:
-                # Use random seed if not specified
-                inputs['seed'] = random.randint(1, 2**31 - 1)
-            if 'sampler_name' in params:
-                inputs['sampler_name'] = params['sampler_name']
-            if 'scheduler' in params:
-                inputs['scheduler'] = params['scheduler']
+                if 'denoise' in params:
+                    inputs['denoise'] = params['denoise']
+                if 'cfg' in params:
+                    inputs['cfg'] = params['cfg']
+                if 'steps' in params:
+                    inputs['steps'] = params['steps']
+                if 'seed' in params and params['seed'] is not None:
+                    inputs['seed'] = params['seed']
+                else:
+                    # Use random seed if not specified
+                    inputs['seed'] = random.randint(1, 2**31 - 1)
+                if 'sampler_name' in params:
+                    inputs['sampler_name'] = params['sampler_name']
+                if 'scheduler' in params:
+                    inputs['scheduler'] = params['scheduler']
         
         # Update prompts (robust to node-id differences by following the sampler graph)
         prompts = aigen_config.get('prompts', {}) or {}
@@ -267,11 +267,11 @@ class WorkflowManager:
                 inputs = node_data.get("inputs")
                 if not isinstance(inputs, dict):
                     continue
-                if isinstance(mask_image_path, str) and '/' not in mask_image_path:
+                    if isinstance(mask_image_path, str) and '/' not in mask_image_path:
                     inputs['image'] = mask_image_path
-                else:
+                    else:
                     inputs['image'] = Path(mask_image_path).name
                 # Only update the first LoadImageMask by default
-                break
+                    break
         
         return workflow_copy
