@@ -2091,6 +2091,15 @@ def main():
             except Exception as e:
                 print(f"Warning: failed to reset working AIGen.yaml: {e}", file=sys.stderr)
 
+            # Remove progress.png so the run starts from the original input.png
+            progress_path = app.project.project_root / "input" / "progress.png"
+            try:
+                if progress_path.exists():
+                    progress_path.unlink()
+                    print(f"Reset: removed {progress_path} (will start from original input.png)")
+            except Exception as e:
+                print(f"Warning: failed to remove progress.png: {e}", file=sys.stderr)
+
             # Note: we deliberately do NOT delete iteration_*.png/json so you keep history.
             # If you want a totally clean slate, delete projects/{project}/working/iteration_* manually.
 
