@@ -1647,7 +1647,8 @@ class IterativeImagination:
             # Check if we've achieved perfect score
             if score >= 100:
                 self.logger.info(f"{'='*60}\nPerfect score achieved! (Score: {score}%)\n{'='*60}")
-                shutil.copy2(self.project.get_iteration_paths(iteration)['image'], output_paths['image'])
+                iteration_paths = self.project.get_iteration_paths(iteration, run_id=self.run_id)
+                shutil.copy2(iteration_paths['image'], output_paths['image'])
                 # Also update input/progress.png so multi-pass edits can chain without overwriting input/input.png.
                 try:
                     progress_path = self.project.project_root / "input" / "progress.png"
