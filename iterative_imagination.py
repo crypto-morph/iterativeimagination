@@ -1752,6 +1752,24 @@ class IterativeImagination:
             if ban_terms:
                 improved_negative = _canonicalise_csv_tags(", ".join(ban_terms + _listify(improved_negative.split(","))))
 
+            # FINAL safety check: ensure all change-intent must_include terms are in the positive prompt
+            # This runs AFTER all filtering/canonicalisation to ensure they're never removed
+            for t in change_must_include:
+                t_str = str(t).strip()
+                if t_str:
+                    t_lower = t_str.lower()
+                    # Extract key words from the must_include term
+                    t_words = [w for w in t_lower.split() if len(w) > 3 and w not in ("this", "lady", "wearing", "the", "that")]
+                    prompt_lower = improved_positive.lower()
+                    all_words_present = all(w in prompt_lower for w in t_words) if t_words else False
+                    full_phrase_present = t_lower in prompt_lower
+                    
+                    if not (full_phrase_present or (len(t_words) > 1 and all_words_present)):
+                        # Force add it at the front for maximum weight (remove any existing instance first)
+                        improved_positive = _filter_csv_by_terms(improved_positive, [t_str])
+                        improved_positive = f"{t_str}, {improved_positive}".strip(" ,\n")
+                        self.logger.warning(f"  FINAL force-add: missing must_include term added to front of positive prompt: {t_str}")
+
             # Log a concise diff so it's clear what changed iteration-to-iteration.
             try:
                 pos_diff = _diff_tokens(current_positive, improved_positive)
