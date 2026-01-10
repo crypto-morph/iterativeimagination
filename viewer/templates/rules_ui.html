@@ -89,6 +89,20 @@
                             </label>
                         </div>
                     </details>
+
+                    <details class="rulesui-details" open style="margin-top:12px;">
+                        <summary>Base prompts (this scope)</summary>
+                        <div class="muted" style="margin-top:6px;">
+                            These are stored in <code>config/rules.yaml</code> under <code>prompts</code>.
+                            Click <strong>Generate base prompts</strong> to refresh them.
+                        </div>
+                        <label class="muted" style="margin-top:10px; display:block;">Positive
+                            <textarea id="scopePromptPositive" class="code-textarea" readonly style="min-height:90px;"></textarea>
+                        </label>
+                        <label class="muted" style="margin-top:10px; display:block;">Negative
+                            <textarea id="scopePromptNegative" class="code-textarea" readonly style="min-height:90px;"></textarea>
+                        </label>
+                    </details>
                 </aside>
 
                 <section class="rulesui-main">

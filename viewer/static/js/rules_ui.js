@@ -77,6 +77,34 @@ let state = {
   dirty: false
 };
 
+function scopeKeyForPrompts() {
+  // "Show all" is a view filter; treat it as global prompts.
+  if (state.scope === "all") return "global";
+  // "default" is still a mask scope; prompts may exist per-mask.
+  return state.scope || "global";
+}
+
+function getScopePrompts() {
+  const rules = state.rules || {};
+  const prompts = rules.prompts || {};
+  const key = scopeKeyForPrompts();
+  if (key !== "global" && prompts.masks && typeof prompts.masks === "object" && prompts.masks[key]) {
+    const p = prompts.masks[key] || {};
+    return { positive: String(p.positive || ""), negative: String(p.negative || "") };
+  }
+  const g = prompts.global || {};
+  return { positive: String(g.positive || ""), negative: String(g.negative || "") };
+}
+
+function renderScopePrompts() {
+  const posEl = $("scopePromptPositive");
+  const negEl = $("scopePromptNegative");
+  if (!posEl || !negEl) return;
+  const p = getScopePrompts();
+  posEl.value = p.positive || "";
+  negEl.value = p.negative || "";
+}
+
 function updateScopePreview() {
   const maskImg = $("scopeMaskImg");
   if (!maskImg) return;
@@ -475,6 +503,7 @@ function renderProjectSettings() {
 function renderAll() {
   renderScopes();
   renderProjectSettings();
+  renderScopePrompts();
   updateScopePreview();
   updateEditMaskLink();
   renderBoard();
@@ -626,6 +655,20 @@ async function generateBasePrompts() {
     if (!res.ok || !data.ok) {
       setStatus(data.error || "Prompt generation failed.");
       return;
+    }
+    // Update UI immediately (we also reload to ensure state matches disk).
+    try {
+      state.rules = state.rules || {};
+      state.rules.prompts = state.rules.prompts || { global: { positive: "", negative: "" }, masks: {} };
+      if (data.scope && data.scope !== "global") {
+        state.rules.prompts.masks = state.rules.prompts.masks || {};
+        state.rules.prompts.masks[data.scope] = { positive: String(data.positive || ""), negative: String(data.negative || "") };
+      } else {
+        state.rules.prompts.global = { positive: String(data.positive || ""), negative: String(data.negative || "") };
+      }
+      renderScopePrompts();
+    } catch (e) {
+      // ignore UI-only update errors
     }
     setStatus(`Generated base prompts for ${data.scope}. Reloading...`);
     await load();
