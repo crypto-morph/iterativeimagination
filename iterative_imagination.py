@@ -1162,13 +1162,15 @@ class IterativeImagination:
             cfg_max = min(cfg_max, cfg_max_no_mask)
 
         # Heuristic: if most criteria are preserve, cap denoise/cfg harder to prevent "wandering".
+        # BUT: when inpainting (mask active), don't apply these caps - the mask protects the rest of the image.
         intents = [(c.get("intent") or "preserve").strip().lower() for c in criteria_defs if isinstance(c, dict)]
         n_preserve = sum(1 for x in intents if x != "change")
         n_change = sum(1 for x in intents if x == "change")
         preserve_heavy = bool(proj_cfg.get("preserve_heavy")) or (n_preserve >= 3 and n_change <= 2)
         # Important: preserve-heavy tasks still need enough edit strength to achieve the *one* change goal.
         # So we only tighten caps when preserve criteria are failing (i.e. we're drifting).
-        if preserve_heavy and failed_preserve:
+        # BUT: skip this cap when inpainting is active - masks allow higher edit strength safely.
+        if preserve_heavy and failed_preserve and not mask_used:
             denoise_max = min(denoise_max, 0.62)
             cfg_max = min(cfg_max, 8.5)
 
@@ -1363,17 +1365,33 @@ class IterativeImagination:
                 return ", ".join(out).strip(" ,\n")
 
             def _filter_csv_by_terms(s: str, forbidden_terms: List[str]) -> str:
-                """Remove any comma-separated token that contains any forbidden term (substring match, catches plurals)."""
+                """Remove any comma-separated token that contains any forbidden term (substring match, catches plurals).
+                
+                Also checks individual words from multi-word forbidden terms (e.g., "summer dress" from "this lady wearing a summer dress").
+                """
                 if not s or not forbidden_terms:
                     return (s or "").strip(" ,\n")
                 forb = [t.strip().lower() for t in forbidden_terms if (t or "").strip()]
+                # Extract individual words from multi-word forbidden terms for partial matching
+                # e.g., "this lady wearing a summer dress" -> also check for "summer" and "dress"
+                forb_words = set()
+                for t in forb:
+                    words = t.split()
+                    for w in words:
+                        if len(w) > 3:  # Only meaningful words (skip "the", "a", etc.)
+                            forb_words.add(w)
+                
                 parts = [p.strip() for p in (s or "").split(",")]
                 out = []
                 for p in parts:
                     if not p:
                         continue
                     pl = p.lower()
+                    # Check if prompt part contains any full forbidden term
                     if any(t in pl for t in forb):
+                        continue
+                    # Also check if prompt part contains any word from a forbidden term
+                    if any(w in pl for w in forb_words):
                         continue
                     out.append(p)
                 return ", ".join(out).strip(" ,\n")
