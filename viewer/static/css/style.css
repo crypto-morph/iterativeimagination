@@ -83,6 +83,35 @@ body {
     background: rgba(255,255,255,0.02);
 }
 
+.rulesui-details {
+    border: 1px solid #2a2a2a;
+    border-radius: 12px;
+    padding: 10px 10px;
+    background: rgba(255,255,255,0.02);
+}
+
+.rulesui-details > summary {
+    cursor: pointer;
+    font-weight: 700;
+    list-style: none;
+    user-select: none;
+}
+
+.rulesui-details > summary::-webkit-details-marker {
+    display: none;
+}
+
+.rulesui-details > summary::before {
+    content: "▸";
+    display: inline-block;
+    margin-right: 8px;
+    transform: translateY(-1px);
+}
+
+.rulesui-details[open] > summary::before {
+    content: "▾";
+}
+
 .rulesui-toolbar {
     border: 1px solid #2a2a2a;
     border-radius: 12px;

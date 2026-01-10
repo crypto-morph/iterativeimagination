@@ -35,42 +35,49 @@
 
             <section class="rulesui-layout" style="margin-top:14px;">
                 <aside class="rulesui-left">
-                    <h3>Scope</h3>
-                    <div class="muted" style="margin-top:6px;">
-                        <strong>Unscoped</strong> criteria apply everywhere (all masks). <strong>Mask: &lt;name&gt;</strong> criteria apply only when that mask is active.
-                        <strong>Show all</strong> is just a view filter.
-                    </div>
-                    <div id="scopeList" class="scope-list" style="margin-top:10px;"></div>
-
-                    <h3 style="margin-top:14px;">Scope preview</h3>
-                    <div class="muted" style="margin-top:6px;">Shows which area your current scope affects.</div>
-                    <div class="mask-preview" style="margin-top:10px;">
-                        <div class="mask-canvas-wrap">
-                            <img id="scopeBaseImg" class="mask-base" src="/api/project/{{ project_name }}/input/image" alt="Input">
-                            <img id="scopeMaskImg" class="mask-canvas" src="" alt="Mask overlay">
+                    <details class="rulesui-details" open>
+                        <summary>Scope</summary>
+                        <div class="muted" style="margin-top:6px;">
+                            Pick a <strong>Mask: name</strong> to edit which criteria are active for that mask.
+                            Inactive criteria are shown grey at the bottom — click one to activate it for the current mask.
+                            <strong>Show all</strong> is just a view filter.
                         </div>
-                    </div>
+                        <div id="scopeList" class="scope-list" style="margin-top:10px;"></div>
+                    </details>
 
-                    <h3 style="margin-top:14px;">Project settings (global)</h3>
-                    <div class="muted" style="margin-top:6px;">These apply to the whole run, not a specific mask.</div>
-                    <div class="form-grid">
-                        <label class="muted">Max iterations
-                            <input id="projMaxIterations" type="number" min="1" max="50" value="20">
-                        </label>
-                        <label class="muted">Preserve heavy
-                            <select id="projPreserveHeavy">
-                                <option value="auto">auto</option>
-                                <option value="true">true</option>
-                                <option value="false">false</option>
-                            </select>
-                        </label>
-                        <label class="muted">Lock seed
-                            <select id="projLockSeed">
-                                <option value="true">true</option>
-                                <option value="false">false</option>
-                            </select>
-                        </label>
-                    </div>
+                    <details class="rulesui-details" open style="margin-top:12px;">
+                        <summary>Scope preview</summary>
+                        <div class="muted" style="margin-top:6px;">Shows the currently selected mask overlay.</div>
+                        <div class="mask-preview" style="margin-top:10px;">
+                            <div class="mask-canvas-wrap">
+                                <img id="scopeBaseImg" class="mask-base" src="/api/project/{{ project_name }}/input/image" alt="Input">
+                                <img id="scopeMaskImg" class="mask-canvas" src="" alt="Mask overlay">
+                            </div>
+                        </div>
+                    </details>
+
+                    <details class="rulesui-details" style="margin-top:12px;">
+                        <summary>Project settings (global)</summary>
+                        <div class="muted" style="margin-top:6px;">These apply to the whole run (all masks).</div>
+                        <div class="form-grid">
+                            <label class="muted">Max iterations
+                                <input id="projMaxIterations" type="number" min="1" max="50" value="20">
+                            </label>
+                            <label class="muted">Preserve heavy
+                                <select id="projPreserveHeavy">
+                                    <option value="auto">auto</option>
+                                    <option value="true">true</option>
+                                    <option value="false">false</option>
+                                </select>
+                            </label>
+                            <label class="muted">Lock seed
+                                <select id="projLockSeed">
+                                    <option value="true">true</option>
+                                    <option value="false">false</option>
+                                </select>
+                            </label>
+                        </div>
+                    </details>
                 </aside>
 
                 <section class="rulesui-main">
@@ -96,10 +103,10 @@
                         </div>
                     </div>
 
-                    <div style="margin-top:14px;">
-                        <h3>Questions</h3>
+                    <details class="rulesui-details" style="margin-top:14px;">
+                        <summary>Questions</summary>
                         <div id="questionsList" class="questions-list muted" style="margin-top:8px;"></div>
-                    </div>
+                    </details>
                 </section>
 
                 <aside class="rulesui-right">
@@ -109,44 +116,53 @@
                         <div class="muted">Field</div>
                         <div id="critField" class="mono" style="margin:6px 0 10px 0;"></div>
 
-                        <label class="muted">Question
-                            <textarea id="critQuestion" class="code-textarea" style="min-height:80px;"></textarea>
-                        </label>
-                        <div class="form-grid" style="margin-top:10px;">
-                            <label class="muted">Intent
-                                <select id="critIntent">
-                                    <option value="change">change</option>
-                                    <option value="preserve">preserve</option>
-                                </select>
+                        <details class="rulesui-details" open>
+                            <summary>Basics</summary>
+                            <label class="muted" style="margin-top:8px;">Question
+                                <textarea id="critQuestion" class="code-textarea" style="min-height:80px;"></textarea>
                             </label>
-                            <label class="muted">Edit strength
-                                <select id="critStrength">
-                                    <option value="low">low</option>
-                                    <option value="medium">medium</option>
-                                    <option value="high">high</option>
-                                </select>
+                            <div class="form-grid" style="margin-top:10px;">
+                                <label class="muted">Intent
+                                    <select id="critIntent">
+                                        <option value="change">change</option>
+                                        <option value="preserve">preserve</option>
+                                    </select>
+                                </label>
+                                <label class="muted">Edit strength
+                                    <select id="critStrength">
+                                        <option value="low">low</option>
+                                        <option value="medium">medium</option>
+                                        <option value="high">high</option>
+                                    </select>
+                                </label>
+                            </div>
+                        </details>
+
+                        <details class="rulesui-details" style="margin-top:10px;">
+                            <summary>Mask membership</summary>
+                            <div class="muted" style="margin-top:6px;">Which masks should evaluate/use this criterion.</div>
+                            <div id="critScopes" class="scope-chips" style="margin-top:8px;"></div>
+                        </details>
+
+                        <details class="rulesui-details" style="margin-top:10px;">
+                            <summary>Prompt guidance (advanced)</summary>
+                            <label class="muted" style="margin-top:8px;">must_include (one per line)
+                                <textarea id="critMust" class="code-textarea" style="min-height:90px;"></textarea>
                             </label>
-                        </div>
-
-                        <div style="margin-top:10px;">
-                            <div class="muted">Applies to masks</div>
-                            <div id="critScopes" class="scope-chips" style="margin-top:6px;"></div>
-                        </div>
-
-                        <label class="muted" style="margin-top:10px;">must_include (one per line)
-                            <textarea id="critMust" class="code-textarea" style="min-height:90px;"></textarea>
-                        </label>
-                        <label class="muted" style="margin-top:10px;">ban_terms (one per line)
-                            <textarea id="critBan" class="code-textarea" style="min-height:90px;"></textarea>
-                        </label>
-                        <label class="muted" style="margin-top:10px;">avoid_terms (one per line)
-                            <textarea id="critAvoid" class="code-textarea" style="min-height:90px;"></textarea>
-                        </label>
+                            <label class="muted" style="margin-top:10px;">ban_terms (one per line)
+                                <textarea id="critBan" class="code-textarea" style="min-height:90px;"></textarea>
+                            </label>
+                            <label class="muted" style="margin-top:10px;">avoid_terms (one per line)
+                                <textarea id="critAvoid" class="code-textarea" style="min-height:90px;"></textarea>
+                            </label>
+                        </details>
                     </div>
 
-                    <h3 style="margin-top:14px;">YAML</h3>
-                    <div class="muted" style="margin-top:6px;">Use the YAML button above to pop out a full preview.</div>
-                    <textarea id="yamlPreview" class="code-textarea" readonly style="min-height:140px;"></textarea>
+                    <details class="rulesui-details" style="margin-top:12px;">
+                        <summary>YAML preview</summary>
+                        <div class="muted" style="margin-top:6px;">Use the YAML button above for the full preview + copy.</div>
+                        <textarea id="yamlPreview" class="code-textarea" readonly style="min-height:140px;"></textarea>
+                    </details>
                 </aside>
             </section>
         </main>
