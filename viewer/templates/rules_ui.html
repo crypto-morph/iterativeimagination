@@ -27,6 +27,7 @@
                 <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
                     <button id="btnReload" class="btn">Reload</button>
                     <button id="btnSave" class="btn primary" disabled>Save rules.yaml</button>
+                    <button id="btnShowYaml" class="btn">YAML</button>
                     <span id="rulesuiStatus" class="muted"></span>
                 </div>
                 <div id="rulesuiLint" class="lint-box hidden"></div>
@@ -35,10 +36,23 @@
             <section class="rulesui-layout" style="margin-top:14px;">
                 <aside class="rulesui-left">
                     <h3>Scope</h3>
-                    <div class="muted" style="margin-top:6px;">Select a scope, then drag cards between Change/Preserve.</div>
+                    <div class="muted" style="margin-top:6px;">
+                        <strong>Unscoped</strong> criteria apply everywhere (all masks). <strong>Mask: &lt;name&gt;</strong> criteria apply only when that mask is active.
+                        <strong>Show all</strong> is just a view filter.
+                    </div>
                     <div id="scopeList" class="scope-list" style="margin-top:10px;"></div>
 
-                    <h3 style="margin-top:14px;">Project settings</h3>
+                    <h3 style="margin-top:14px;">Scope preview</h3>
+                    <div class="muted" style="margin-top:6px;">Shows which area your current scope affects.</div>
+                    <div class="mask-preview" style="margin-top:10px;">
+                        <div class="mask-canvas-wrap">
+                            <img id="scopeBaseImg" class="mask-base" src="/api/project/{{ project_name }}/input/image" alt="Input">
+                            <img id="scopeMaskImg" class="mask-canvas" src="" alt="Mask overlay">
+                        </div>
+                    </div>
+
+                    <h3 style="margin-top:14px;">Project settings (global)</h3>
+                    <div class="muted" style="margin-top:6px;">These apply to the whole run, not a specific mask.</div>
                     <div class="form-grid">
                         <label class="muted">Max iterations
                             <input id="projMaxIterations" type="number" min="1" max="50" value="20">
@@ -60,6 +74,11 @@
                 </aside>
 
                 <section class="rulesui-main">
+                    <div class="rulesui-actions">
+                        <button id="btnAddCriterion" class="btn">Add criterion</button>
+                        <button id="btnAddQuestion" class="btn">Add question</button>
+                        <span class="muted">New items start in the current scope.</span>
+                    </div>
                     <div class="board">
                         <div class="board-col" data-intent="change">
                             <div class="board-col-header">
@@ -125,11 +144,29 @@
                         </label>
                     </div>
 
-                    <h3 style="margin-top:14px;">YAML preview</h3>
-                    <textarea id="yamlPreview" class="code-textarea" readonly style="min-height:260px;"></textarea>
+                    <h3 style="margin-top:14px;">YAML</h3>
+                    <div class="muted" style="margin-top:6px;">Use the YAML button above to pop out a full preview.</div>
+                    <textarea id="yamlPreview" class="code-textarea" readonly style="min-height:140px;"></textarea>
                 </aside>
             </section>
         </main>
+    </div>
+
+    <div id="yamlModal" class="modal hidden" aria-hidden="true">
+        <div class="modal-backdrop" id="yamlBackdrop"></div>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="yamlTitle">
+            <div class="modal-header">
+                <div>
+                    <h3 id="yamlTitle" style="margin:0;">rules.yaml (preview)</h3>
+                    <div class="muted">Read-only. Use Save to write to disk.</div>
+                </div>
+                <div style="display:flex; gap:10px;">
+                    <button id="btnCopyYaml" class="btn">Copy</button>
+                    <button id="btnCloseYaml" class="btn primary">Close</button>
+                </div>
+            </div>
+            <textarea id="yamlModalText" class="code-textarea" readonly style="min-height:520px;"></textarea>
+        </div>
     </div>
 
     <script>

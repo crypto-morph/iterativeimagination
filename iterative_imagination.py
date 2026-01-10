@@ -14,6 +14,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Dict, Optional, List
+from contextlib import suppress
 
 # Add src directory to path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
@@ -439,10 +440,15 @@ class IterativeImagination:
                     resolved_mask_path = None
 
             if resolved_mask_path is not None:
-                try:
-                    mask_filename = self.project.prepare_input_image(resolved_mask_path, self.comfyui_input_dir)
-                except Exception:
-                    mask_filename = None
+                # If the mask is all white (everything editable), prefer running without inpaint.
+                if self._mask_is_all_white(resolved_mask_path):
+                    self.logger.info("Mask appears all-white; treating as no-mask (non-inpaint) run.")
+                    resolved_mask_path = None
+                if resolved_mask_path is not None:
+                    try:
+                        mask_filename = self.project.prepare_input_image(resolved_mask_path, self.comfyui_input_dir)
+                    except Exception:
+                        mask_filename = None
 
         # Optional ControlNet control image (for workflows that require a separate control image input).
         # Convention: projects/<name>/input/control.png
@@ -542,9 +548,39 @@ class IterativeImagination:
         # Answer questions, evaluate, and compare
         questions = self._answer_questions(str(paths['image']))
         
-        # If criteria are scoped per mask, only evaluate the relevant subset for this iteration.
+        # If criteria are scoped per mask, evaluate only the relevant subset for this iteration.
+        #
+        # Preferred: rules.yaml membership model:
+        #   masking:
+        #     masks:
+        #       - name: left
+        #         active_criteria: [field1, field2]
+        #
+        # Backwards compatible: acceptance_criteria.applies_to_masks / mask_scope
         all_criteria = self.rules.get('acceptance_criteria', []) or []
-        def _criteria_for_mask(criteria_defs: List[Dict], mask_name: Optional[str]) -> List[Dict]:
+
+        def _criteria_for_active_mask(criteria_defs: List[Dict], mask_name: Optional[str]) -> List[Dict]:
+            # Membership model
+            masking_rules = self.rules.get("masking") if isinstance(self.rules, dict) else None
+            masks = (masking_rules.get("masks") if isinstance(masking_rules, dict) else None) if masking_rules else None
+            if isinstance(masks, list) and masks:
+                if not mask_name:
+                    return criteria_defs
+                active_fields: set[str] = set()
+                for m in masks:
+                    if not isinstance(m, dict):
+                        continue
+                    if str(m.get("name") or "").strip() != str(mask_name).strip():
+                        continue
+                    ac = m.get("active_criteria") or []
+                    if isinstance(ac, list):
+                        active_fields = {str(x).strip() for x in ac if str(x).strip()}
+                    break
+                if not active_fields:
+                    return []
+                return [c for c in criteria_defs if isinstance(c, dict) and str(c.get("field") or "").strip() in active_fields]
+
+            # Legacy per-criterion scoping
             if not mask_name:
                 return criteria_defs
             out = []
@@ -566,7 +602,7 @@ class IterativeImagination:
                     out.append(c)
             return out
 
-        scoped_criteria = _criteria_for_mask(all_criteria, active_mask_name)
+        scoped_criteria = _criteria_for_active_mask(all_criteria, active_mask_name)
         evaluation = self._evaluate_acceptance_criteria(str(paths['image']), questions, criteria=scoped_criteria)
         
         score = evaluation.get('overall_score', 0)
@@ -671,11 +707,32 @@ class IterativeImagination:
         
         # Improve prompts based on failed criteria (data-driven via rules.yaml tags)
         #
-        # If this run is scoped to a particular mask (multi-mask projects), only consider criteria
-        # that apply to that mask (acceptance_criteria.applies_to_masks).
+        # If this run is scoped to a particular mask (multi-mask projects), only consider
+        # criteria active for that mask.
         all_criteria_defs = self.rules.get('acceptance_criteria', []) or []
         active_mask = iteration_result.get("active_mask")
-        def _criteria_for_mask(criteria_defs: List[Dict], mask_name: Optional[str]) -> List[Dict]:
+
+        def _criteria_for_active_mask(criteria_defs: List[Dict], mask_name: Optional[str]) -> List[Dict]:
+            masking_rules = self.rules.get("masking") if isinstance(self.rules, dict) else None
+            masks = (masking_rules.get("masks") if isinstance(masking_rules, dict) else None) if masking_rules else None
+            if isinstance(masks, list) and masks:
+                if not mask_name:
+                    return criteria_defs
+                active_fields: set[str] = set()
+                for m in masks:
+                    if not isinstance(m, dict):
+                        continue
+                    if str(m.get("name") or "").strip() != str(mask_name).strip():
+                        continue
+                    ac = m.get("active_criteria") or []
+                    if isinstance(ac, list):
+                        active_fields = {str(x).strip() for x in ac if str(x).strip()}
+                    break
+                if not active_fields:
+                    return []
+                return [c for c in criteria_defs if isinstance(c, dict) and str(c.get("field") or "").strip() in active_fields]
+
+            # Legacy per-criterion scoping fallback
             if not mask_name:
                 return criteria_defs
             out = []
@@ -697,7 +754,7 @@ class IterativeImagination:
                     out.append(c)
             return out
 
-        criteria_defs = _criteria_for_mask(all_criteria_defs, active_mask)
+        criteria_defs = _criteria_for_active_mask(all_criteria_defs, active_mask)
         criteria_by_field = {c.get('field'): c for c in criteria_defs if isinstance(c, dict) and c.get('field')}
         criteria_results = evaluation.get('criteria_results', {}) or {}
 
@@ -1111,6 +1168,32 @@ class IterativeImagination:
         """
         self.logger.info(f"{'='*60}\nIterative Imagination\n{'='*60}")
         self.logger.info(f"Project: {self.project_name}")
+
+    def _mask_is_all_white(self, mask_path: Path) -> bool:
+        """Return True if the mask is effectively 'all white' (editable everywhere).
+
+        Uses Pillow if available; if Pillow is missing or the image cannot be read, returns False.
+        """
+        try:
+            with suppress(Exception):
+                from PIL import Image  # type: ignore
+                img = Image.open(mask_path)
+                # Handle alpha explicitly so transparent pixels don't masquerade as white.
+                if img.mode in ("RGBA", "LA"):
+                    rgb = img.convert("RGB")
+                    alpha = img.split()[-1]
+                    # Consider "all white" only if alpha is fully opaque and RGB is all-white-ish.
+                    a_min, a_max = alpha.getextrema()
+                    if a_min < 254:
+                        return False
+                    g = rgb.convert("L")
+                else:
+                    g = img.convert("L")
+                mn, mx = g.getextrema()
+                return mn >= 254 and mx >= 254
+        except Exception:
+            return False
+        return False
         self.logger.info(f"Input image: {self.input_image_path}")
         self.logger.info(f"Max iterations: {self.rules['project']['max_iterations']}\n{'='*60}")
         

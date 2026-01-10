@@ -90,6 +90,57 @@ body {
     background: rgba(255,255,255,0.02);
 }
 
+.rulesui-actions {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+}
+
+.mask-preview .mask-canvas {
+    opacity: 0.55;
+}
+
+.modal.hidden {
+    display: none;
+}
+
+.modal {
+    position: fixed;
+    inset: 0;
+    z-index: 999;
+}
+
+.modal-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.55);
+}
+
+.modal-card {
+    position: absolute;
+    top: 4vh;
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(1100px, 92vw);
+    max-height: 92vh;
+    overflow: auto;
+    border-radius: 12px;
+    border: 1px solid #2a2a2a;
+    background: #fff;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.35);
+    padding: 12px;
+}
+
+.modal-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+
 .scope-list {
     display: flex;
     gap: 8px;
@@ -137,6 +188,11 @@ body {
     cursor: pointer;
     user-select: none;
     margin-bottom: 10px;
+}
+
+.crit-card.inactive {
+    opacity: 0.55;
+    filter: grayscale(0.2);
 }
 
 .crit-card.selected {

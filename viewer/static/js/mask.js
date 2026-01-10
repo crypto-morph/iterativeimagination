@@ -187,6 +187,14 @@ function clearMask() {
   setStatus("Cleared.");
 }
 
+function fillWhite() {
+  const canvas = $("maskCanvas");
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "rgb(255,255,255)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  setStatus("Filled white (editable everywhere).");
+}
+
 async function saveMask() {
   setStatus(`Saving '${maskName}'...`);
   const canvas = $("maskCanvas");
@@ -230,6 +238,8 @@ function wire() {
   $("toolBrush").addEventListener("click", () => setActiveTool("brush"));
   $("toolEraser").addEventListener("click", () => setActiveTool("eraser"));
   $("btnClear").addEventListener("click", clearMask);
+  const fillBtn = $("btnFillWhite");
+  if (fillBtn) fillBtn.addEventListener("click", fillWhite);
   $("btnLoad").addEventListener("click", loadExistingMask);
   $("btnSave").addEventListener("click", saveMask);
 

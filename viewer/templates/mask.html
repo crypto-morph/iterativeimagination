@@ -37,6 +37,7 @@
                         <input id="brushSize" type="range" min="3" max="80" value="24">
                     </label>
                     <button id="btnClear" class="btn">Clear</button>
+                    <button id="btnFillWhite" class="btn">Fill white</button>
                     <button id="btnLoad" class="btn">Load existing</button>
                     <button id="btnSave" class="btn primary">Save mask</button>
                     <span id="maskStatus" class="muted"></span>
@@ -55,6 +56,7 @@
                             <li>Mask only the garment area (avoid face/hair/background).</li>
                             <li>Feather the edges a bit (use a larger brush) for smoother blends.</li>
                             <li>Default mask saves to <code>input/mask.png</code>. Named masks save to <code>input/masks/&lt;name&gt;.png</code>.</li>
+                            <li><code>Fill white</code> makes the whole image editable (useful for testing, but often better to run without masking for full-frame changes).</li>
                         </ul>
                     </div>
                 </div>

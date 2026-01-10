@@ -10,6 +10,34 @@ function setStatus(text) {
   $("rulesuiStatus").textContent = text || "";
 }
 
+function openYamlModal() {
+  const m = $("yamlModal");
+  m.classList.remove("hidden");
+  m.setAttribute("aria-hidden", "false");
+  // Copy current preview into modal
+  $("yamlModalText").value = $("yamlPreview").value || "";
+}
+
+function closeYamlModal() {
+  const m = $("yamlModal");
+  m.classList.add("hidden");
+  m.setAttribute("aria-hidden", "true");
+}
+
+async function copyYaml() {
+  const text = $("yamlModalText").value || $("yamlPreview").value || "";
+  try {
+    await navigator.clipboard.writeText(text);
+    setStatus("Copied YAML to clipboard.");
+  } catch (e) {
+    // Fallback
+    $("yamlModalText").focus();
+    $("yamlModalText").select();
+    document.execCommand("copy");
+    setStatus("Copied YAML.");
+  }
+}
+
 function showLint(errors, warnings) {
   const box = $("rulesuiLint");
   const errs = errors || [];
@@ -44,10 +72,23 @@ function escapeHtml(s) {
 let state = {
   masks: [],
   rules: null,
-  scope: "global", // global | all | <maskName>
+  scope: "default", // <maskName> | all
   selectedField: null,
   dirty: false
 };
+
+function updateScopePreview() {
+  const maskImg = $("scopeMaskImg");
+  if (!maskImg) return;
+  // For "show all", hide overlay.
+  if (state.scope === "all") {
+    maskImg.src = "";
+    maskImg.style.display = "none";
+    return;
+  }
+  maskImg.style.display = "block";
+  maskImg.src = `/api/project/${project}/input/mask/${encodeURIComponent(state.scope)}`;
+}
 
 function markDirty() {
   state.dirty = true;
@@ -77,52 +118,62 @@ function maskNames() {
   return names;
 }
 
-function scopesForCrit(c) {
-  const s = c.applies_to_masks || c.mask_scope;
-  if (!s) return null;
-  if (Array.isArray(s)) return s.map(String);
-  if (typeof s === "string") return [s];
-  return [String(s)];
+function membership() {
+  const rules = state.rules || {};
+  const masking = rules.masking || {};
+  const masks = masking.masks || [];
+  return Array.isArray(masks) ? masks : [];
 }
 
-function setScopesForCrit(c, scopes) {
-  if (!scopes || !scopes.length) {
-    delete c.applies_to_masks;
-    delete c.mask_scope;
-    return;
+function getActiveSet(maskName) {
+  const m = membership().find(x => String(x.name || "") === String(maskName));
+  const arr = (m && m.active_criteria) ? m.active_criteria : [];
+  const list = Array.isArray(arr) ? arr.map(String) : [];
+  return new Set(list);
+}
+
+function setActiveSet(maskName, set) {
+  const masks = membership();
+  let m = masks.find(x => String(x.name || "") === String(maskName));
+  if (!m) {
+    m = { name: maskName, active_criteria: [] };
+    masks.push(m);
   }
-  c.applies_to_masks = scopes;
-  delete c.mask_scope;
+  m.active_criteria = Array.from(set);
+  state.rules.masking = state.rules.masking || {};
+  state.rules.masking.masks = masks;
+}
+
+function toggleCriterionInMask(maskName, field) {
+  const s = getActiveSet(maskName);
+  if (s.has(field)) s.delete(field);
+  else s.add(field);
+  setActiveSet(maskName, s);
+  markDirty();
+  renderAll();
 }
 
 function scopeLabel() {
-  if (state.scope === "global") return "Global";
-  if (state.scope === "all") return "All";
+  if (state.scope === "all") return "All criteria (view)";
   return `Mask: ${state.scope}`;
 }
 
 function criteriaInScope() {
   const all = getCriteria();
   if (state.scope === "all") return all;
-  if (state.scope === "global") {
-    return all.filter(c => !scopesForCrit(c));
-  }
-  return all.filter(c => {
-    const scopes = scopesForCrit(c);
-    if (!scopes) return false;
-    return scopes.includes(state.scope);
-  });
+  const active = getActiveSet(state.scope);
+  return all.filter(c => active.has(String(c.field || "")));
 }
 
 function renderScopes() {
   const root = $("scopeList");
   root.innerHTML = "";
 
-  const scopes = ["global", ...maskNames(), "all"];
+  const scopes = [...maskNames(), "all"];
   for (const s of scopes) {
     const btn = document.createElement("button");
     btn.className = "btn";
-    btn.textContent = (s === "global") ? "Global" : (s === "all") ? "All" : s;
+    btn.textContent = (s === "all") ? "Show all" : `Mask: ${s}`;
     btn.addEventListener("click", () => {
       state.scope = s;
       state.selectedField = null;
@@ -155,7 +206,11 @@ function renderBoard() {
   changeCol.innerHTML = "";
   preserveCol.innerHTML = "";
 
-  const crits = criteriaInScope();
+  const all = getCriteria();
+  const active = (state.scope === "all") ? new Set(all.map(c => String(c.field || ""))) : getActiveSet(state.scope);
+  const activeCrits = all.filter(c => active.has(String(c.field || "")));
+  const inactiveCrits = all.filter(c => !active.has(String(c.field || "")));
+  const crits = (state.scope === "all") ? all : [...activeCrits, ...inactiveCrits];
 
   for (const c of crits) {
     const intent = (c.intent || "preserve").toLowerCase() === "change" ? "change" : "preserve";
@@ -182,7 +237,12 @@ function renderBoard() {
     card.appendChild(meta);
 
     card.addEventListener("click", () => {
-      state.selectedField = String(c.field || "");
+      const f = String(c.field || "");
+      if (state.scope !== "all" && !active.has(f)) {
+        toggleCriterionInMask(state.scope, f);
+        return;
+      }
+      state.selectedField = f;
       renderEditor();
     });
 
@@ -193,6 +253,9 @@ function renderBoard() {
 
     if (state.selectedField && state.selectedField === String(c.field || "")) {
       card.classList.add("selected");
+    }
+    if (state.scope !== "all" && !active.has(String(c.field || ""))) {
+      card.classList.add("inactive");
     }
 
     (intent === "change" ? changeCol : preserveCol).appendChild(card);
@@ -242,24 +305,20 @@ function renderEditor() {
   $("critBan").value = joinLines(c.ban_terms || []);
   $("critAvoid").value = joinLines(c.avoid_terms || []);
 
-  // scopes checkboxes
+  // mask membership checkboxes
   const scopesEl = $("critScopes");
   scopesEl.innerHTML = "";
-  const currentScopes = new Set(scopesForCrit(c) || []);
-  const names = maskNames().filter(n => n !== "default" ? true : true); // include default too
+  const field = String(c.field || "");
+  const names = maskNames();
 
   const mk = (name) => {
     const lab = document.createElement("label");
     lab.className = "chip";
     const cb = document.createElement("input");
     cb.type = "checkbox";
-    cb.checked = currentScopes.has(name);
+    cb.checked = getActiveSet(name).has(field);
     cb.addEventListener("change", () => {
-      if (cb.checked) currentScopes.add(name);
-      else currentScopes.delete(name);
-      setScopesForCrit(c, Array.from(currentScopes));
-      markDirty();
-      renderAll();
+      toggleCriterionInMask(name, field);
     });
     lab.appendChild(cb);
     const t = document.createElement("span");
@@ -315,12 +374,11 @@ function wireDnD() {
       const intent = parentCol && parentCol.dataset.intent === "change" ? "change" : "preserve";
       c.intent = intent;
 
-      // Set scope based on selected scope
-      if (state.scope === "global") setScopesForCrit(c, []);
-      else if (state.scope === "all") {
-        // do not change scope in "all" view
-      } else {
-        setScopesForCrit(c, [state.scope]);
+      // Ensure membership: if we're in a specific mask scope, activate it there
+      if (state.scope !== "all") {
+        const s = getActiveSet(state.scope);
+        s.add(field);
+        setActiveSet(state.scope, s);
       }
 
       markDirty();
@@ -363,6 +421,7 @@ function renderProjectSettings() {
 function renderAll() {
   renderScopes();
   renderProjectSettings();
+  updateScopePreview();
   renderBoard();
   renderQuestions();
   renderEditor();
@@ -382,10 +441,79 @@ async function load() {
   }
   state.masks = data.masks || [];
   state.rules = data.rules || {};
-  state.scope = "global";
+  state.scope = "default";
   state.selectedField = null;
   state.dirty = false;
   $("btnSave").disabled = true;
+  renderAll();
+}
+
+function normaliseFieldName(s) {
+  return String(s || "")
+    .trim()
+    .toLowerCase()
+    .replaceAll(/[^a-z0-9_]+/g, "_")
+    .replaceAll(/_{2,}/g, "_")
+    .replaceAll(/^_+|_+$/g, "");
+}
+
+function createCriterion() {
+  const raw = window.prompt("New criterion field name (e.g. left_outfit):");
+  if (!raw) return;
+  const field = normaliseFieldName(raw);
+  if (!field) {
+    setStatus("Invalid field name.");
+    return;
+  }
+  const crits = getCriteria();
+  if (crits.some(c => String(c.field || "") === field)) {
+    setStatus(`Field already exists: ${field}`);
+    return;
+  }
+  const c = {
+    field,
+    question: "Describe the goal for this criterion.",
+    type: "boolean",
+    min: 0,
+    max: 1,
+    intent: "change",
+    edit_strength: "medium",
+    must_include: [],
+    ban_terms: [],
+    avoid_terms: []
+  };
+  // Add to membership for the current mask scope (or default if in Show all view).
+  const targetMask = (state.scope === "all") ? "default" : state.scope;
+  const s = getActiveSet(targetMask);
+  s.add(field);
+  setActiveSet(targetMask, s);
+  crits.push(c);
+  setCriteria(crits);
+  state.selectedField = field;
+  markDirty();
+  renderAll();
+}
+
+function createQuestion() {
+  const raw = window.prompt("New question field name (e.g. left_outfit_desc):");
+  if (!raw) return;
+  const field = normaliseFieldName(raw);
+  if (!field) {
+    setStatus("Invalid question field name.");
+    return;
+  }
+  const q = getQuestions();
+  if (q.some(x => String(x.field || "") === field)) {
+    setStatus(`Question field already exists: ${field}`);
+    return;
+  }
+  q.push({
+    field,
+    question: "Write a question the vision model can answer about the image.",
+    type: "string"
+  });
+  state.rules.questions = q;
+  markDirty();
   renderAll();
 }
 
@@ -415,6 +543,12 @@ async function save() {
 function wire() {
   $("btnReload").addEventListener("click", load);
   $("btnSave").addEventListener("click", save);
+  $("btnAddCriterion").addEventListener("click", createCriterion);
+  $("btnAddQuestion").addEventListener("click", createQuestion);
+  $("btnShowYaml").addEventListener("click", openYamlModal);
+  $("btnCloseYaml").addEventListener("click", closeYamlModal);
+  $("yamlBackdrop").addEventListener("click", closeYamlModal);
+  $("btnCopyYaml").addEventListener("click", copyYaml);
   wireDnD();
 }
 

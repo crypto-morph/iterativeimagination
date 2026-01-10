@@ -464,6 +464,119 @@ def _render_rules_yaml(rules_obj: dict) -> str:
     return yaml.safe_dump(rules_obj, default_flow_style=False, sort_keys=False, allow_unicode=True)
 
 
+def _ensure_membership_model(rules_obj: dict, masks: list[dict]) -> dict:
+    """Ensure rules.yaml contains a mask->active_criteria membership model.
+
+    Backwards compatible migration:
+    - If rules_obj has no top-level `masking.masks`, derive membership from acceptance_criteria.applies_to_masks.
+    - Criteria without applies_to_masks are treated as active in the `default` mask.
+
+    The membership model is:
+      masking:
+        masks:
+          - name: default
+            active_criteria: [field1, field2, ...]
+          - name: left
+            active_criteria: [...]
+    """
+    if not isinstance(rules_obj, dict):
+        return rules_obj
+
+    masking = rules_obj.get("masking")
+    if isinstance(masking, dict) and isinstance(masking.get("masks"), list) and masking.get("masks"):
+        return rules_obj
+
+    criteria = rules_obj.get("acceptance_criteria") or []
+    if not isinstance(criteria, list):
+        criteria = []
+
+    # Available mask names from filesystem (always include default)
+    mask_names = [m.get("name") for m in masks if isinstance(m, dict)]
+    mask_names = [str(x) for x in mask_names if x]
+    if "default" not in mask_names:
+        mask_names.insert(0, "default")
+
+    # Seed membership sets
+    active_by_mask: dict[str, list[str]] = {n: [] for n in mask_names}
+
+    def _add(mask_name: str, field: str):
+        if mask_name not in active_by_mask:
+            active_by_mask[mask_name] = []
+        if field not in active_by_mask[mask_name]:
+            active_by_mask[mask_name].append(field)
+
+    for c in criteria:
+        if not isinstance(c, dict):
+            continue
+        field = str(c.get("field") or "").strip()
+        if not field:
+            continue
+
+        scopes = c.get("applies_to_masks") or c.get("mask_scope")
+        if not scopes:
+            _add("default", field)
+            continue
+        if isinstance(scopes, str):
+            scopes_list = [scopes]
+        elif isinstance(scopes, list):
+            scopes_list = scopes
+        else:
+            scopes_list = [str(scopes)]
+        scopes_norm = [str(x).strip() for x in scopes_list if str(x).strip()]
+        for s in scopes_norm:
+            _add(s, field)
+
+    rules_obj["masking"] = {
+        "masks": [{"name": name, "active_criteria": active_by_mask.get(name, [])} for name in mask_names]
+    }
+    return rules_obj
+
+
+def _normalise_membership_model(rules_obj: dict) -> dict:
+    """Normalise membership model and strip legacy per-criterion scoping fields."""
+    if not isinstance(rules_obj, dict):
+        return rules_obj
+    masking = rules_obj.get("masking") or {}
+    if not isinstance(masking, dict):
+        return rules_obj
+    masks = masking.get("masks")
+    if not isinstance(masks, list):
+        return rules_obj
+
+    # Normalise mask entries
+    seen = set()
+    out = []
+    for m in masks:
+        if not isinstance(m, dict):
+            continue
+        name = str(m.get("name") or "").strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        ac = m.get("active_criteria") or []
+        if not isinstance(ac, list):
+            ac = []
+        ac_norm = []
+        seen_f = set()
+        for f in ac:
+            ff = str(f).strip()
+            if not ff or ff in seen_f:
+                continue
+            seen_f.add(ff)
+            ac_norm.append(ff)
+        out.append({"name": name, "active_criteria": ac_norm})
+    rules_obj["masking"] = {"masks": out}
+
+    # Strip legacy fields so there is only one source of truth.
+    crits = rules_obj.get("acceptance_criteria")
+    if isinstance(crits, list):
+        for c in crits:
+            if isinstance(c, dict):
+                c.pop("applies_to_masks", None)
+                c.pop("mask_scope", None)
+    return rules_obj
+
+
 @app.route('/api/project/<project_name>/config/rules_struct', methods=['GET'])
 def get_rules_struct(project_name: str):
     """Get structured rules.yaml as JSON + mask list for UI."""
@@ -483,8 +596,9 @@ def get_rules_struct(project_name: str):
     except Exception as e:
         return jsonify({"error": f"Failed to parse rules.yaml: {e}"}), 400
 
-    # Include masks so the UI can show valid scopes.
+    # Include masks so the UI can show valid scopes and build membership.
     masks = _list_project_masks(project_dir)
+    rules_obj = _ensure_membership_model(rules_obj, masks)
     errors, warnings = _lint_rules_obj(rules_obj)
     yaml_text = _render_rules_yaml(rules_obj)
     return jsonify({"ok": True, "rules": rules_obj, "masks": masks, "yaml": yaml_text, "errors": errors, "warnings": warnings}), 200
@@ -498,6 +612,7 @@ def render_rules_struct(project_name: str):
     if not isinstance(rules_obj, dict):
         return jsonify({"error": "Expected JSON {rules: {...}}"}), 400
 
+    rules_obj = _normalise_membership_model(rules_obj)
     errors, warnings = _lint_rules_obj(rules_obj)
     yaml_text = _render_rules_yaml(rules_obj)
     return jsonify({"ok": True, "yaml": yaml_text, "errors": errors, "warnings": warnings}), 200
@@ -520,6 +635,7 @@ def save_rules_struct(project_name: str):
     if not rules_path.exists():
         return jsonify({"error": "rules.yaml not found"}), 404
 
+    rules_obj = _normalise_membership_model(rules_obj)
     errors, warnings = _lint_rules_obj(rules_obj)
     if errors:
         return jsonify({"ok": False, "errors": errors, "warnings": warnings, "yaml": _render_rules_yaml(rules_obj)}), 400
