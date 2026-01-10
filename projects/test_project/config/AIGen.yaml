@@ -10,8 +10,8 @@ comfyui:
 # Note: AIVis configuration has been moved to AIVis.yaml
 parameters:
   denoise: 0.75  # Will be auto-boosted to 0.75+ when masking is enabled
-  cfg: 15.0  # Will be auto-boosted to 10.0+ when masking is enabled
-  steps: 25
+  cfg: 20.0  # Increased from 15.0 to allow more aggressive guidance (max: 25.0)
+  steps: 30  # Increased from 25 for more refinement
   seed: null
   sampler_name: dpmpp_2m_sde_gpu
   scheduler: karras
