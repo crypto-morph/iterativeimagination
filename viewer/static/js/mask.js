@@ -220,7 +220,7 @@ async function suggestMask() {
     setStatus("Type what to mask first (e.g. 'left woman').");
     return;
   }
-  setStatus(`Suggesting mask '${maskName}' for: ${text}`);
+  setStatus(`Suggesting mask '${maskName}' for: ${text} (queueing...)`);
   $("btnSuggestMask").disabled = true;
   try {
     const res = await fetch(`/api/project/${project}/input/mask_suggest`, {
@@ -233,9 +233,36 @@ async function suggestMask() {
       setStatus(data.error || "Mask suggestion failed.");
       return;
     }
-    await refreshMaskList();
-    await loadExistingMask();
-    setStatus(`Suggested mask saved to '${maskName}'. You can refine it with the brush.`);
+    const jobId = data.job_id;
+    if (!jobId) {
+      setStatus("Mask suggestion started, but no job_id returned.");
+      return;
+    }
+
+    const started = Date.now();
+    while (Date.now() - started < 10 * 60 * 1000) { // 10 minutes
+      await new Promise(r => setTimeout(r, 1000));
+      const stRes = await fetch(`/api/project/${project}/input/mask_suggest/${encodeURIComponent(jobId)}`, { cache: "no-store" });
+      const st = await stRes.json().catch(() => ({}));
+      if (!stRes.ok) {
+        setStatus(st.error || "Mask suggestion status failed.");
+        return;
+      }
+      const status = st.status || "running";
+      const msg = st.message || status;
+      setStatus(`Suggesting '${maskName}': ${msg}`);
+      if (status === "done") {
+        await refreshMaskList();
+        await loadExistingMask();
+        setStatus(`Suggested mask saved to '${maskName}'. You can refine it with the brush.`);
+        return;
+      }
+      if (status === "error") {
+        setStatus(st.message || st.error || "Mask suggestion failed.");
+        return;
+      }
+    }
+    setStatus("Mask suggestion timed out (still running). Try again in a moment.");
   } catch (e) {
     setStatus(`Mask suggestion failed: ${e.message}`);
   } finally {

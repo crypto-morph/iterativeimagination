@@ -26,6 +26,10 @@ _TRANSPARENT_PNG_1X1 = base64.b64decode(
 _LIVE_RUNS_LOCK = threading.Lock()
 _LIVE_RUNS = {}  # (project_name, run_id) -> LiveRunController
 
+# Mask suggestion jobs (in-memory)
+_MASK_JOBS_LOCK = threading.Lock()
+_MASK_JOBS = {}  # (project_name, job_id) -> dict
+
 
 @app.route('/')
 def index():
@@ -335,10 +339,13 @@ def save_named_mask(project_name: str, mask_name: str):
 
 @app.route('/api/project/<project_name>/input/mask_suggest', methods=['POST'])
 def suggest_mask(project_name: str):
-    """Generate a mask from a text query via ComfyUI (GroundingDINO + SAM2) and save it into the project.
+    """Start a background mask-suggestion job via ComfyUI (GroundingDINO + SAM2).
 
     Payload:
       { "mask_name": "left", "query": "left woman", "threshold": 0.30 }
+
+    Returns immediately:
+      { ok: true, job_id: "...", status: "running" }
     """
     payload = request.get_json(silent=True) or {}
     mask_name = payload.get("mask_name") or payload.get("name") or "default"
@@ -359,90 +366,134 @@ def suggest_mask(project_name: str):
     except Exception:
         return jsonify({"error": "Invalid project or mask name"}), 400
 
-    # Locate input image
-    input_path = project_dir / "input" / "input.png"
-    if not input_path.exists():
-        return jsonify({"error": "Project input image not found (expected input/input.png)"}), 404
+    job_id = __import__("uuid").uuid4().hex
+    key = (project_name, job_id)
 
-    # Load ComfyUI host/port from project config
-    aigen = _load_project_aigen(project_dir)
-    comfy = aigen.get("comfyui") if isinstance(aigen, dict) else {}
-    host = (comfy.get("host") if isinstance(comfy, dict) else None) or "localhost"
-    port = int((comfy.get("port") if isinstance(comfy, dict) else None) or 8188)
-
-    # Import ComfyUI client (in src/)
-    try:
-        import sys as _sys
-        from pathlib import Path as _Path
-        _sys.path.insert(0, str(_Path(__file__).parent.parent / "src"))
-        from comfyui_client import ComfyUIClient  # noqa: E402
-    except Exception as e:
-        return jsonify({"error": f"Failed to import ComfyUI client: {e}"}), 500
-
-    client = ComfyUIClient(host=host, port=port)
-    if not client.test_connection():
-        return jsonify({"error": f"ComfyUI not reachable at {host}:{port}"}), 502
-
-    comfyui_input_dir = _find_comfyui_input_dir()
-    try:
-        comfy_input_filename = _copy_to_comfyui_input(project_name, input_path, comfyui_input_dir)
-    except Exception as e:
-        return jsonify({"error": f"Failed to copy input image to ComfyUI input dir: {e}"}), 500
-
-    # Build a minimal workflow:
-    # LoadImage -> GroundingDinoModelLoader -> SAM2ModelLoader -> GroundingDinoSAM2Segment -> MaskToImage -> SaveImage
-    prefix = f"iterative_imagination_{project_name}_mask_suggest_{mname}"
-    workflow = {
-        "1": {"class_type": "LoadImage", "inputs": {"image": comfy_input_filename}},
-        "2": {"class_type": "GroundingDinoModelLoader (segment anything2)", "inputs": {"model_name": "GroundingDINO_SwinT_OGC (694MB)"}},
-        "3": {"class_type": "SAM2ModelLoader (segment anything2)", "inputs": {"model_name": "sam2_hiera_small.pt"}},
-        "4": {"class_type": "GroundingDinoSAM2Segment (segment anything2)", "inputs": {
-            "sam_model": ["3", 0],
-            "grounding_dino_model": ["2", 0],
-            "image": ["1", 0],
-            "prompt": query.strip(),
+    with _MASK_JOBS_LOCK:
+        _MASK_JOBS[key] = {
+            "job_id": job_id,
+            "project": project_name,
+            "mask_name": mname,
+            "query": query.strip(),
             "threshold": threshold_f,
-        }},
-        "5": {"class_type": "MaskToImage", "inputs": {"mask": ["4", 1]}},
-        "6": {"class_type": "SaveImage", "inputs": {"images": ["5", 0], "filename_prefix": prefix}},
-    }
+            "status": "queued",
+            "message": "queued",
+            "created_at": time.time(),
+            "updated_at": time.time(),
+            "result_file": None,
+            "error": None,
+        }
 
-    try:
-        prompt_id = client.queue_prompt(workflow)
-        ok = client.wait_for_completion(prompt_id, max_wait=600)
-        if not ok:
-            return jsonify({"error": "Timed out waiting for ComfyUI mask generation"}), 504
-        hist = client.get_history(prompt_id)
-        rec = hist.get(prompt_id) or {}
-        outputs = rec.get("outputs") or {}
-        out6 = outputs.get("6") or {}
-        images = out6.get("images") or []
-        if not images:
-            return jsonify({"error": "ComfyUI did not return an output image for the mask"}), 500
-        img0 = images[0]
-        filename = img0.get("filename")
-        subfolder = img0.get("subfolder", "")
-        ftype = img0.get("type", "output")
-        if not filename:
-            return jsonify({"error": "ComfyUI output image missing filename"}), 500
-        raw = client.download_image(filename, subfolder=subfolder, folder_type=ftype)
-    except Exception as e:
-        return jsonify({"error": f"Mask generation failed: {e}"}), 500
+    def _set(status: str, message: str | None = None, **extra):
+        with _MASK_JOBS_LOCK:
+            j = _MASK_JOBS.get(key)
+            if not j:
+                return
+            j["status"] = status
+            if message is not None:
+                j["message"] = message
+            j["updated_at"] = time.time()
+            j.update(extra)
 
-    # Save result into project
-    input_dir = project_dir / "input"
-    if mname == "default":
-        out_path = input_dir / "mask.png"
-    else:
-        (input_dir / "masks").mkdir(parents=True, exist_ok=True)
-        out_path = input_dir / "masks" / f"{mname}.png"
+    def _work():
+        _set("running", "starting")
+        try:
+            # Locate input image
+            input_path = project_dir / "input" / "input.png"
+            if not input_path.exists():
+                _set("error", "input/input.png not found", error="missing input.png")
+                return
 
-    try:
-        out_path.write_bytes(raw)
-    except Exception as e:
-        return jsonify({"error": f"Failed to write mask to {out_path}: {e}"}), 500
+            # Load ComfyUI host/port from project config
+            aigen = _load_project_aigen(project_dir)
+            comfy = aigen.get("comfyui") if isinstance(aigen, dict) else {}
+            host = (comfy.get("host") if isinstance(comfy, dict) else None) or "localhost"
+            port = int((comfy.get("port") if isinstance(comfy, dict) else None) or 8188)
 
-    return jsonify({"ok": True, "mask_name": mname, "file": str(out_path.relative_to(project_dir))}), 200
+            # Import ComfyUI client (in src/)
+            import sys as _sys
+            from pathlib import Path as _Path
+            _sys.path.insert(0, str(_Path(__file__).parent.parent / "src"))
+            from comfyui_client import ComfyUIClient  # noqa: E402
+
+            client = ComfyUIClient(host=host, port=port)
+            if not client.test_connection():
+                _set("error", f"ComfyUI not reachable at {host}:{port}", error="comfyui unreachable")
+                return
+
+            comfyui_input_dir = _find_comfyui_input_dir()
+            _set("running", "copying input image to ComfyUI...")
+            comfy_input_filename = _copy_to_comfyui_input(project_name, input_path, comfyui_input_dir)
+
+            prefix = f"iterative_imagination_{project_name}_mask_suggest_{mname}"
+            workflow = {
+                "1": {"class_type": "LoadImage", "inputs": {"image": comfy_input_filename}},
+                "2": {"class_type": "GroundingDinoModelLoader (segment anything2)", "inputs": {"model_name": "GroundingDINO_SwinT_OGC (694MB)"}},
+                "3": {"class_type": "SAM2ModelLoader (segment anything2)", "inputs": {"model_name": "sam2_hiera_small.pt"}},
+                "4": {"class_type": "GroundingDinoSAM2Segment (segment anything2)", "inputs": {
+                    "sam_model": ["3", 0],
+                    "grounding_dino_model": ["2", 0],
+                    "image": ["1", 0],
+                    "prompt": query.strip(),
+                    "threshold": threshold_f,
+                }},
+                "5": {"class_type": "MaskToImage", "inputs": {"mask": ["4", 1]}},
+                "6": {"class_type": "SaveImage", "inputs": {"images": ["5", 0], "filename_prefix": prefix}},
+            }
+
+            _set("running", "queueing workflow to ComfyUI...")
+            prompt_id = client.queue_prompt(workflow)
+            _set("running", "running (this can take a while on first use)...", prompt_id=prompt_id)
+            ok = client.wait_for_completion(prompt_id, max_wait=600)
+            if not ok:
+                _set("error", "Timed out waiting for ComfyUI mask generation", error="timeout")
+                return
+
+            _set("running", "downloading mask result...")
+            hist = client.get_history(prompt_id)
+            rec = hist.get(prompt_id) or {}
+            outputs = rec.get("outputs") or {}
+            out6 = outputs.get("6") or {}
+            images = out6.get("images") or []
+            if not images:
+                _set("error", "ComfyUI returned no output image for the mask", error="no output")
+                return
+            img0 = images[0]
+            filename = img0.get("filename")
+            subfolder = img0.get("subfolder", "")
+            ftype = img0.get("type", "output")
+            if not filename:
+                _set("error", "ComfyUI output missing filename", error="bad output")
+                return
+            raw = client.download_image(filename, subfolder=subfolder, folder_type=ftype)
+
+            # Save result into project
+            input_dir = project_dir / "input"
+            if mname == "default":
+                out_path = input_dir / "mask.png"
+            else:
+                (input_dir / "masks").mkdir(parents=True, exist_ok=True)
+                out_path = input_dir / "masks" / f"{mname}.png"
+            out_path.write_bytes(raw)
+            _set("done", "done", result_file=str(out_path.relative_to(project_dir)))
+        except Exception as e:
+            _set("error", f"Mask generation failed: {e}", error=str(e))
+
+    threading.Thread(target=_work, daemon=True).start()
+    return jsonify({"ok": True, "job_id": job_id, "status": "queued"}), 202
+
+
+@app.route('/api/project/<project_name>/input/mask_suggest/<job_id>')
+def suggest_mask_status(project_name: str, job_id: str):
+    """Get status of a mask suggestion job."""
+    key = (project_name, str(job_id))
+    with _MASK_JOBS_LOCK:
+        j = _MASK_JOBS.get(key)
+        if not j:
+            return jsonify({"error": "Job not found"}), 404
+        # shallow copy for safety
+        out = dict(j)
+    return jsonify({"ok": True, **out}), 200
 
 
 @app.route('/api/project/<project_name>/config')
@@ -972,4 +1023,6 @@ def live_feedback(project_name: str, run_id: str):
 
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    # Default to stable behavior (no auto-reloader) so long-running requests don't get dropped.
+    debug = os.environ.get("VIEWER_DEBUG", "").strip() == "1"
+    app.run(debug=debug, use_reloader=debug, threaded=True, host='0.0.0.0', port=5000)
