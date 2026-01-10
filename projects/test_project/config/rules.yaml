@@ -121,10 +121,10 @@ prompts:
       positive: snowsuit, three women in a professional setting, modern office, identical
         facial features, same pose, identical body proportions, identical background
     middle:
-      positive: professional setting, three women, midline, formal attire, identical
-        facial features, same pose, identical body proportions, background identical,
-        modern office, large window, natural light
-      negative: hawaiian skirt, coconut bra, business suit, shirt
+      positive: hawaiian skirt, coconut bra, professional setting, three women, midline,
+        identical facial features, same pose, identical body proportions, background
+        identical, modern office, large window, natural light
+      negative: business suit, shirt
 questions:
 - field: person_clothing_description
   question: Describe the person's clothing in detail. What type of garments are they
