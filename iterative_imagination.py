@@ -1382,17 +1382,25 @@ class IterativeImagination:
             # BUT: protect must_include terms from being pruned - they're critical.
             # Extract must_include terms first, prune, then add them back.
             protected_terms = []
+            protected_words = set()  # Individual words from protected terms (for partial matching)
             for t in must_include_terms:
                 t_str = str(t).strip()
                 if t_str:
                     protected_terms.append(t_str)
+                    # Also extract individual words for partial matching
+                    # e.g., "lady wearing snowsuit" -> protect "snowsuit" if it appears alone
+                    words = t_str.lower().split()
+                    for w in words:
+                        if len(w) > 3:  # Only protect meaningful words (skip "the", "a", etc.)
+                            protected_words.add(w)
             
             # Temporarily remove protected terms, prune, then add them back
             # IMPORTANT: Use substring matching for multi-word terms like "lady wearing snowsuit"
+            # Also protect individual words that appear in protected terms (e.g., "snowsuit" from "lady wearing snowsuit")
             temp_positive = improved_positive
+            import re
             for pt in protected_terms:
                 # Remove protected term temporarily (case-insensitive, substring match for phrases)
-                import re
                 pt_escaped = re.escape(pt)
                 # For multi-word terms, use substring match; for single words, use word boundary
                 if " " in pt:
@@ -1400,7 +1408,29 @@ class IterativeImagination:
                 else:
                     temp_positive = re.sub(rf"\b{pt_escaped}\b", "", temp_positive, flags=re.IGNORECASE)
             
+            # Also protect individual words from protected terms (e.g., "snowsuit" from "lady wearing snowsuit")
+            # Split prompt into parts and protect any that contain protected words
+            pos_parts_before_prune = [p.strip() for p in temp_positive.split(",") if p.strip()]
+            protected_parts = []
+            remaining_parts = []
+            for part in pos_parts_before_prune:
+                part_lower = part.lower()
+                is_protected = False
+                # Check if this part contains any protected word
+                for pw in protected_words:
+                    if pw in part_lower:
+                        protected_parts.append(part)
+                        is_protected = True
+                        break
+                if not is_protected:
+                    remaining_parts.append(part)
+            
+            # Prune only the non-protected parts
+            temp_positive = ", ".join(remaining_parts)
             improved_positive = _prune_weird_tokens(temp_positive)
+            # Re-add protected parts (they'll be properly ordered later)
+            if protected_parts:
+                improved_positive = ", ".join(protected_parts + [improved_positive]).strip(" ,\n")
             improved_negative = _prune_weird_tokens(improved_negative)
             
             # Protected terms will be added back in correct order below
@@ -1426,11 +1456,26 @@ class IterativeImagination:
             # Extract existing parts, filter out must_include terms (we'll re-add in correct order)
             pos_parts = [p.strip() for p in improved_positive.split(",") if p.strip()]
             all_must_include_lower = [str(t).strip().lower() for t in (change_must_include + preserve_must_include) if t]
+            # Also extract individual words from must_include terms for partial matching
+            # e.g., "lady wearing snowsuit" -> protect "snowsuit" if it appears alone
+            must_include_words = set()
+            for term in all_must_include_lower:
+                words = term.split()
+                for w in words:
+                    if len(w) > 3:  # Only meaningful words (skip "the", "a", etc.)
+                        must_include_words.add(w)
+            
             filtered_parts = []
+            protected_parts = []
             for part in pos_parts:
                 part_lower = part.lower()
+                # Check if this part matches a full must_include term
                 is_must_include = any(term_lower in part_lower or part_lower in term_lower for term_lower in all_must_include_lower)
-                if not is_must_include:
+                # Also check if this part contains a word from a must_include term (partial match)
+                contains_protected_word = any(pw in part_lower for pw in must_include_words)
+                if is_must_include or contains_protected_word:
+                    protected_parts.append(part)  # Keep this part, don't filter it
+                else:
                     filtered_parts.append(part)
             
             # Add change terms first (for weight), then preserve terms, then rest
@@ -1443,37 +1488,56 @@ class IterativeImagination:
                 if t_str:
                     # Check if a close variant exists (substring match)
                     t_lower = t_str.lower()
-                    found_variant = any(t_lower in p.lower() or p.lower() in t_lower for p in pos_parts)
+                    found_variant = False
+                    # First check protected_parts (already identified as must_include related)
+                    for i, p in enumerate(protected_parts):
+                        if t_lower in p.lower() or p.lower() in t_lower:
+                            change_terms_to_add.append(p)
+                            protected_parts.pop(i)
+                            found_variant = True
+                            break
+                    # If not found, check filtered_parts
                     if not found_variant:
-                        change_terms_to_add.append(t_str)
-                    else:
-                        # If variant exists, move it to front by removing from filtered_parts and adding to change_terms_to_add
                         for i, p in enumerate(filtered_parts):
                             if t_lower in p.lower() or p.lower() in t_lower:
                                 change_terms_to_add.append(p)
                                 filtered_parts.pop(i)
+                                found_variant = True
                                 break
+                    # If still not found, add the full term
+                    if not found_variant:
+                        change_terms_to_add.append(t_str)
             
             preserve_terms_to_add = []
             for t in preserve_must_include:
                 t_str = str(t).strip()
                 if t_str:
                     t_lower = t_str.lower()
-                    found_variant = any(t_lower in p.lower() or p.lower() in t_lower for p in pos_parts)
+                    found_variant = False
+                    # First check protected_parts
+                    for i, p in enumerate(protected_parts):
+                        if t_lower in p.lower() or p.lower() in t_lower:
+                            preserve_terms_to_add.append(p)
+                            protected_parts.pop(i)
+                            found_variant = True
+                            break
+                    # If not found, check filtered_parts
                     if not found_variant:
-                        preserve_terms_to_add.append(t_str)
-                    else:
-                        # Move variant to preserve section
                         for i, p in enumerate(filtered_parts):
                             if t_lower in p.lower() or p.lower() in t_lower:
                                 preserve_terms_to_add.append(p)
                                 filtered_parts.pop(i)
+                                found_variant = True
                                 break
+                    # If still not found, add the full term
+                    if not found_variant:
+                        preserve_terms_to_add.append(t_str)
             
             # Deduplicate final list (case-insensitive)
+            # Include protected_parts that weren't moved to change/preserve sections
             final_parts = []
             seen_lower = set()
-            for part in (change_terms_to_add + preserve_terms_to_add + filtered_parts):
+            for part in (change_terms_to_add + preserve_terms_to_add + protected_parts + filtered_parts):
                 part_lower = part.lower().strip()
                 if part_lower and part_lower not in seen_lower:
                     seen_lower.add(part_lower)
