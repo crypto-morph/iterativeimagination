@@ -496,6 +496,36 @@ def suggest_mask_status(project_name: str, job_id: str):
     return jsonify({"ok": True, **out}), 200
 
 
+@app.route('/api/project/<project_name>/input/mask_suggest')
+def list_suggest_mask_jobs(project_name: str):
+    """List recent mask suggestion jobs for a project (in-memory)."""
+    try:
+        _safe_project_dir(project_name)
+    except Exception:
+        return jsonify({"error": "Invalid project"}), 400
+
+    with _MASK_JOBS_LOCK:
+        jobs = [dict(v) for (p, _jid), v in _MASK_JOBS.items() if p == project_name]
+    jobs.sort(key=lambda x: float(x.get("updated_at") or 0), reverse=True)
+    # keep payload small
+    slim = []
+    for j in jobs[:25]:
+        slim.append({
+            "job_id": j.get("job_id"),
+            "mask_name": j.get("mask_name"),
+            "query": j.get("query"),
+            "threshold": j.get("threshold"),
+            "status": j.get("status"),
+            "message": j.get("message"),
+            "prompt_id": j.get("prompt_id"),
+            "result_file": j.get("result_file"),
+            "error": j.get("error"),
+            "created_at": j.get("created_at"),
+            "updated_at": j.get("updated_at"),
+        })
+    return jsonify({"ok": True, "jobs": slim}), 200
+
+
 @app.route('/api/project/<project_name>/config')
 def get_project_config(project_name: str):
     """Get project configuration (rules.yaml)."""

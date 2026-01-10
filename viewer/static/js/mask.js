@@ -238,6 +238,7 @@ async function suggestMask() {
       setStatus("Mask suggestion started, but no job_id returned.");
       return;
     }
+    setStatus(`Suggest job ${jobId} started…`);
 
     const started = Date.now();
     while (Date.now() - started < 10 * 60 * 1000) { // 10 minutes
@@ -250,7 +251,8 @@ async function suggestMask() {
       }
       const status = st.status || "running";
       const msg = st.message || status;
-      setStatus(`Suggesting '${maskName}': ${msg}`);
+      const pid = st.prompt_id ? ` (prompt ${st.prompt_id})` : "";
+      setStatus(`Suggest job ${jobId}${pid}: ${msg}`);
       if (status === "done") {
         await refreshMaskList();
         await loadExistingMask();
