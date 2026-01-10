@@ -1302,8 +1302,25 @@ class IterativeImagination:
                 return out.strip(" ,\n")
 
             # First prune obvious garbage (long, sentence-like fragments) before tag logic.
-            improved_positive = _prune_weird_tokens(improved_positive)
+            # BUT: protect must_include terms from being pruned - they're critical.
+            # Extract must_include terms first, prune, then add them back.
+            protected_terms = []
+            for t in must_include_terms:
+                t_str = str(t).strip()
+                if t_str:
+                    protected_terms.append(t_str)
+            
+            # Temporarily remove protected terms, prune, then add them back
+            temp_positive = improved_positive
+            for pt in protected_terms:
+                # Remove protected term temporarily (case-insensitive, whole word)
+                import re
+                temp_positive = re.sub(rf"\b{re.escape(pt)}\b", "", temp_positive, flags=re.IGNORECASE)
+            
+            improved_positive = _prune_weird_tokens(temp_positive)
             improved_negative = _prune_weird_tokens(improved_negative)
+            
+            # Protected terms will be added back in correct order below
 
             for t in avoid_terms:
                 improved_positive = re.sub(rf"\\b{re.escape(t)}\\b", "", improved_positive, flags=re.IGNORECASE)
