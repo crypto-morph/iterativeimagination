@@ -422,6 +422,7 @@ function renderAll() {
   renderScopes();
   renderProjectSettings();
   updateScopePreview();
+  updateEditMaskLink();
   renderBoard();
   renderQuestions();
   renderEditor();
@@ -455,6 +456,23 @@ function normaliseFieldName(s) {
     .replaceAll(/[^a-z0-9_]+/g, "_")
     .replaceAll(/_{2,}/g, "_")
     .replaceAll(/^_+|_+$/g, "");
+}
+
+function validateMaskName(name) {
+  const n = (name || "").trim();
+  if (!n) return null;
+  if (n === "default") return "default";
+  if (!/^[a-zA-Z0-9_-]+$/.test(n)) return null;
+  return n;
+}
+
+function updateEditMaskLink() {
+  const a = $("btnEditMask");
+  if (!a) return;
+  const mask = (state.scope === "all") ? "default" : state.scope;
+  a.href = `/project/${project}/mask?mask=${encodeURIComponent(mask)}`;
+  if (state.scope === "all") a.classList.add("disabled");
+  else a.classList.remove("disabled");
 }
 
 function createCriterion() {
@@ -549,6 +567,18 @@ function wire() {
   $("btnCloseYaml").addEventListener("click", closeYamlModal);
   $("yamlBackdrop").addEventListener("click", closeYamlModal);
   $("btnCopyYaml").addEventListener("click", copyYaml);
+  const btnCreate = $("btnCreateMaskRulesUI");
+  if (btnCreate) {
+    btnCreate.addEventListener("click", () => {
+      const raw = $("newMaskNameRulesUI").value || "";
+      const name = validateMaskName(raw);
+      if (!name) {
+        setStatus("Invalid mask name. Use letters, numbers, _ or -.");
+        return;
+      }
+      window.location.href = `/project/${project}/mask?mask=${encodeURIComponent(name)}`;
+    });
+  }
   wireDnD();
 }
 

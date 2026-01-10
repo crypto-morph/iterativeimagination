@@ -43,6 +43,16 @@
                             <strong>Show all</strong> is just a view filter.
                         </div>
                         <div id="scopeList" class="scope-list" style="margin-top:10px;"></div>
+                        <div class="rulesui-scope-actions" style="margin-top:10px;">
+                            <a id="btnEditMask" class="btn" href="/project/{{ project_name }}/mask?mask=default">Edit selected mask</a>
+                            <label class="muted">New mask:
+                                <input id="newMaskNameRulesUI" type="text" placeholder="left / middle / right" style="width:160px;">
+                            </label>
+                            <button id="btnCreateMaskRulesUI" class="btn">Create & draw</button>
+                        </div>
+                        <div class="muted" style="margin-top:8px;">
+                            Tip: <strong>default</strong> saves to <code>input/mask.png</code>. Named masks save to <code>input/masks/&lt;name&gt;.png</code>.
+                        </div>
                     </details>
 
                     <details class="rulesui-details" open style="margin-top:12px;">
