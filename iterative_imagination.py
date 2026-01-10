@@ -642,6 +642,7 @@ class IterativeImagination:
         # Load and update workflow
         # If a mask is present, prefer an inpaint workflow (project-local first, then defaults).
         workflow_path = aigen_config.get("workflow_file")
+        workflow_switched = False
         if mask_filename:
             # If current workflow isn't already an inpaint workflow, try switching to one.
             wf_name = str(workflow_path or "")
@@ -649,9 +650,19 @@ class IterativeImagination:
                 candidate = self.project.project_root / "workflow" / "img2img_inpaint_api.json"
                 if candidate.exists():
                     workflow_path = "workflow/img2img_inpaint_api.json"
+                    workflow_switched = True
                 else:
                     # Fall back to repo defaults path if project doesn't have it for some reason.
                     workflow_path = "defaults/workflow/img2img_inpaint_api.json"
+                    workflow_switched = True
+                # Persist the workflow switch to AIGen.yaml
+                if workflow_switched:
+                    aigen_config["workflow_file"] = workflow_path
+                    try:
+                        self.project.save_aigen_config(aigen_config)
+                        self.logger.info(f"Switched to inpaint workflow: {workflow_path}")
+                    except Exception:
+                        pass
 
         workflow = WorkflowManager.load_workflow(
             workflow_path, self.project.project_root
