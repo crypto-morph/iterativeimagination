@@ -1003,6 +1003,38 @@ def _ensure_membership_model(rules_obj: dict, masks: list[dict]) -> dict:
     return rules_obj
 
 
+def _ensure_prompts_model(rules_obj: dict) -> dict:
+    """Ensure rules.yaml has a prompts section for storing base prompts.
+
+    Schema:
+      prompts:
+        global:
+          positive: ""
+          negative: ""
+        masks:
+          left:
+            positive: ""
+            negative: ""
+    """
+    if not isinstance(rules_obj, dict):
+        return rules_obj
+    prompts = rules_obj.get("prompts")
+    if not isinstance(prompts, dict):
+        prompts = {}
+    g = prompts.get("global")
+    if not isinstance(g, dict):
+        g = {}
+    g.setdefault("positive", "")
+    g.setdefault("negative", "")
+    m = prompts.get("masks")
+    if not isinstance(m, dict):
+        m = {}
+    prompts["global"] = g
+    prompts["masks"] = m
+    rules_obj["prompts"] = prompts
+    return rules_obj
+
+
 def _normalise_membership_model(rules_obj: dict) -> dict:
     """Normalise membership model and strip legacy per-criterion scoping fields."""
     if not isinstance(rules_obj, dict):
@@ -1070,6 +1102,7 @@ def get_rules_struct(project_name: str):
     # Include masks so the UI can show valid scopes and build membership.
     masks = _list_project_masks(project_dir)
     rules_obj = _ensure_membership_model(rules_obj, masks)
+    rules_obj = _ensure_prompts_model(rules_obj)
     errors, warnings = _lint_rules_obj(rules_obj)
     yaml_text = _render_rules_yaml(rules_obj)
     return jsonify({"ok": True, "rules": rules_obj, "masks": masks, "yaml": yaml_text, "errors": errors, "warnings": warnings}), 200
@@ -1084,6 +1117,7 @@ def render_rules_struct(project_name: str):
         return jsonify({"error": "Expected JSON {rules: {...}}"}), 400
 
     rules_obj = _normalise_membership_model(rules_obj)
+    rules_obj = _ensure_prompts_model(rules_obj)
     errors, warnings = _lint_rules_obj(rules_obj)
     yaml_text = _render_rules_yaml(rules_obj)
     return jsonify({"ok": True, "yaml": yaml_text, "errors": errors, "warnings": warnings}), 200
@@ -1107,6 +1141,7 @@ def save_rules_struct(project_name: str):
         return jsonify({"error": "rules.yaml not found"}), 404
 
     rules_obj = _normalise_membership_model(rules_obj)
+    rules_obj = _ensure_prompts_model(rules_obj)
     errors, warnings = _lint_rules_obj(rules_obj)
     if errors:
         return jsonify({"ok": False, "errors": errors, "warnings": warnings, "yaml": _render_rules_yaml(rules_obj)}), 400
@@ -1120,6 +1155,203 @@ def save_rules_struct(project_name: str):
 
     rules_path.write_text(_render_rules_yaml(rules_obj), encoding="utf-8")
     return jsonify({"ok": True, "warnings": warnings}), 200
+
+
+@app.route('/api/project/<project_name>/config/rules_generate_base_prompts', methods=['POST'])
+def generate_rules_base_prompts(project_name: str):
+    """Generate and persist base prompts into config/rules.yaml for a scope (global or mask name)."""
+    payload = request.get_json(silent=True) or {}
+    scope = str(payload.get("scope") or "all").strip() or "all"
+    if scope == "all":
+        scope = "global"
+
+    try:
+        project_dir = _safe_project_dir(project_name)
+    except Exception:
+        return jsonify({"error": "Invalid project"}), 400
+
+    rules_path = project_dir / "config" / "rules.yaml"
+    if not rules_path.exists():
+        return jsonify({"error": "rules.yaml not found"}), 404
+
+    try:
+        rules_obj = yaml.safe_load(rules_path.read_text(encoding="utf-8")) or {}
+        if not isinstance(rules_obj, dict):
+            return jsonify({"error": "rules.yaml must contain a mapping at top level"}), 400
+    except Exception as e:
+        return jsonify({"error": f"Failed to parse rules.yaml: {e}"}), 400
+
+    # Normalise models
+    masks = _list_project_masks(project_dir)
+    rules_obj = _ensure_membership_model(rules_obj, masks)
+    rules_obj = _ensure_prompts_model(rules_obj)
+
+    # Determine active criteria for this scope.
+    masking = rules_obj.get("masking") or {}
+    mm = masking.get("masks") if isinstance(masking, dict) else []
+    if not isinstance(mm, list):
+        mm = []
+    active_fields: list[str] = []
+    if scope == "global":
+        # Global base prompts are for "no-mask / whole image" projects.
+        # Use all criteria fields (in order), since there is no single mask scope to consult.
+        crits_all = rules_obj.get("acceptance_criteria") or []
+        if isinstance(crits_all, list):
+            for c in crits_all:
+                if isinstance(c, dict) and c.get("field"):
+                    active_fields.append(str(c.get("field")))
+    else:
+        for m in mm:
+            if isinstance(m, dict) and str(m.get("name") or "") == scope:
+                ac = m.get("active_criteria") or []
+                if isinstance(ac, list):
+                    active_fields = [str(x) for x in ac if str(x).strip()]
+                break
+        if not active_fields and scope != "default":
+            return jsonify({"error": f"Unknown mask scope: {scope}"}), 400
+
+    crits = rules_obj.get("acceptance_criteria") or []
+    if not isinstance(crits, list):
+        crits = []
+    by_field = {}
+    for c in crits:
+        if isinstance(c, dict) and c.get("field"):
+            by_field[str(c.get("field"))] = c
+
+    def _lines_for_crit(c: dict) -> list[str]:
+        field = str(c.get("field") or "")
+        intent = str(c.get("intent") or "")
+        must = c.get("must_include") or []
+        ban = c.get("ban_terms") or []
+        avoid = c.get("avoid_terms") or []
+        if not isinstance(must, list):
+            must = []
+        if not isinstance(ban, list):
+            ban = []
+        if not isinstance(avoid, list):
+            avoid = []
+        must_s = ", ".join([str(x).strip() for x in must if str(x).strip()])
+        ban_s = ", ".join([str(x).strip() for x in ban if str(x).strip()])
+        avoid_s = ", ".join([str(x).strip() for x in avoid if str(x).strip()])
+        out = [f"- {field} (intent: {intent})"]
+        if must_s:
+            out.append(f"  must_include: {must_s}")
+        if ban_s:
+            out.append(f"  ban_terms: {ban_s}")
+        if avoid_s:
+            out.append(f"  avoid_terms: {avoid_s}")
+        return out
+
+    active_criteria_text = "\n".join(
+        sum([_lines_for_crit(by_field[f]) for f in active_fields if f in by_field], [])
+    ).strip()
+
+    # Load / cache the original description based on the current input image.
+    input_dir = project_dir / "input"
+    img_path = input_dir / "progress.png"
+    if not img_path.exists():
+        img_path = input_dir / "input.png"
+    if not img_path.exists():
+        return jsonify({"error": "Input image not found (input/progress.png or input/input.png)"}), 404
+
+    working_dir = project_dir / "working"
+    working_dir.mkdir(parents=True, exist_ok=True)
+    desc_cache = working_dir / "original_description.txt"
+    original_description = None
+    try:
+        if desc_cache.exists():
+            original_description = desc_cache.read_text(encoding="utf-8").strip()
+    except Exception:
+        original_description = None
+
+    # Build AIVis client (project override, else defaults)
+    try:
+        import sys
+        from pathlib import Path as _Path
+        sys.path.insert(0, str(_Path(__file__).parent.parent / "src"))
+        from aivis_client import AIVisClient  # noqa: E402
+    except Exception as e:
+        return jsonify({"error": f"Failed to import AIVis client: {e}"}), 500
+
+    aivis_cfg_path = project_dir / "config" / "AIVis.yaml"
+    if not aivis_cfg_path.exists():
+        aivis_cfg_path = _Path(__file__).parent.parent / "defaults" / "config" / "AIVis.yaml"
+    try:
+        aivis_cfg = yaml.safe_load(_Path(aivis_cfg_path).read_text(encoding="utf-8")) or {}
+    except Exception:
+        aivis_cfg = {}
+
+    provider = str(aivis_cfg.get("provider") or "openrouter")
+    model = str(aivis_cfg.get("model") or "qwen/qwen-2.5-vl-7b-instruct:free")
+    fallback_provider = aivis_cfg.get("fallback_provider")
+    fallback_model = aivis_cfg.get("fallback_model")
+    api_key = aivis_cfg.get("api_key")
+
+    prompts_path = _Path(__file__).parent.parent / "defaults" / "prompts.yaml"
+    try:
+        client = AIVisClient(
+            model=model,
+            provider=provider,
+            api_key=api_key,
+            fallback_provider=fallback_provider,
+            fallback_model=fallback_model,
+            prompts_path=prompts_path,
+        )
+    except Exception as e:
+        return jsonify({"error": f"Failed to initialise AIVis client: {e}"}), 500
+
+    if not original_description:
+        original_description = client.describe_image(str(img_path))
+        try:
+            desc_cache.write_text(original_description, encoding="utf-8")
+        except Exception:
+            pass
+
+    try:
+        parsed, meta = client.generate_base_prompts(
+            original_description=original_description,
+            scope=scope,
+            active_criteria_text=active_criteria_text,
+        )
+    except Exception as e:
+        return jsonify({"error": f"Prompt generation failed: {e}"}), 500
+
+    positive = str(parsed.get("positive") or "").strip()
+    negative = str(parsed.get("negative") or "").strip()
+    if not positive and not negative:
+        return jsonify({"error": "AIVis returned empty prompts"}), 500
+
+    prompts = rules_obj.get("prompts") or {}
+    if scope == "global":
+        prompts["global"] = {"positive": positive, "negative": negative}
+    else:
+        masks_map = prompts.get("masks") if isinstance(prompts.get("masks"), dict) else {}
+        masks_map[scope] = {"positive": positive, "negative": negative}
+        prompts["masks"] = masks_map
+    rules_obj["prompts"] = prompts
+
+    rules_obj = _normalise_membership_model(rules_obj)
+    rules_obj = _ensure_prompts_model(rules_obj)
+    errors, warnings = _lint_rules_obj(rules_obj)
+    if errors:
+        return jsonify({"ok": False, "errors": errors, "warnings": warnings, "yaml": _render_rules_yaml(rules_obj)}), 400
+
+    import time
+    backup = rules_path.with_name(f"rules.yaml.bak.{time.strftime('%Y-%m-%d_%H-%M-%S')}")
+    try:
+        backup.write_text(rules_path.read_text(encoding="utf-8"), encoding="utf-8")
+    except Exception:
+        pass
+    rules_path.write_text(_render_rules_yaml(rules_obj), encoding="utf-8")
+
+    return jsonify({
+        "ok": True,
+        "scope": scope,
+        "positive": positive,
+        "negative": negative,
+        "warnings": warnings,
+        "aivis_metadata": meta,
+    }), 200
 
 
 @app.route('/api/project/<project_name>/working/aigen/prompts', methods=['GET'])

@@ -612,12 +612,35 @@ async function save() {
   await load();
 }
 
+async function generateBasePrompts() {
+  const scope = state.scope || "all";
+  setStatus(`Generating base prompts for scope: ${scopeLabel()}...`);
+  $("btnGenPrompts").disabled = true;
+  try {
+    const res = await fetch(`/api/project/${project}/config/rules_generate_base_prompts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scope })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      setStatus(data.error || "Prompt generation failed.");
+      return;
+    }
+    setStatus(`Generated base prompts for ${data.scope}. Reloading...`);
+    await load();
+  } finally {
+    $("btnGenPrompts").disabled = false;
+  }
+}
+
 function wire() {
   $("btnReload").addEventListener("click", load);
   $("btnSave").addEventListener("click", save);
   $("btnAddCriterion").addEventListener("click", createCriterion);
   $("btnAddQuestion").addEventListener("click", createQuestion);
   $("btnShowYaml").addEventListener("click", openYamlModal);
+  $("btnGenPrompts").addEventListener("click", generateBasePrompts);
   $("btnCloseYaml").addEventListener("click", closeYamlModal);
   $("yamlBackdrop").addEventListener("click", closeYamlModal);
   $("btnCopyYaml").addEventListener("click", copyYaml);

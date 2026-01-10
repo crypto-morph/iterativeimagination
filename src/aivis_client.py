@@ -733,6 +733,36 @@ class AIVisClient:
                 "error": str(e)
             }
             return f"Failed to describe image: {str(e)}"
+
+    def generate_base_prompts(self, original_description: str, scope: str, active_criteria_text: str) -> Tuple[Dict, Dict]:
+        """Generate a clean starting positive/negative prompt from description + active criteria tags.
+
+        Returns:
+            (result, metadata) where result is a dict with keys: "positive", "negative"
+        """
+        original_description = original_description or "Original image description unavailable."
+        scope = scope or "global"
+        active_criteria_text = active_criteria_text or ""
+
+        if "generate_base_prompts" not in self.prompts:
+            raise ValueError("Missing prompt template: generate_base_prompts")
+
+        prompt = self.prompts["generate_base_prompts"].format(
+            original_description=original_description,
+            scope=scope,
+            active_criteria_text=active_criteria_text,
+        )
+
+        payload = {
+            "model": self.model,
+            "prompt": prompt,
+            "stream": False,
+            "format": "json",
+        }
+
+        parsed, metadata = self._make_request_with_retry(payload, parse_json=True)
+        self._last_request_metadata = metadata
+        return parsed, metadata
     
     def improve_prompts(self, current_positive: str, current_negative: str,
                        evaluation: Dict, comparison: Dict, failed_criteria: List[str],

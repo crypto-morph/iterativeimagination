@@ -257,6 +257,40 @@ class IterativeImagination:
             self.logger.info("Describing original image (caching for all iterations)...")
             self.original_description = self.aivis.describe_image(str(self.input_image_path))
         return self.original_description
+
+    def _get_rules_base_prompts(self, scope: Optional[str]) -> tuple[str, str]:
+        """Fetch base prompts from rules.yaml `prompts` section.
+
+        Priority:
+        - prompts.masks[scope] (if scope provided)
+        - prompts.masks["default"] (if scope is None)
+        - prompts.global
+        """
+        rules = self.rules if isinstance(self.rules, dict) else {}
+        prompts = rules.get("prompts") or {}
+        if not isinstance(prompts, dict):
+            return "", ""
+
+        masks = prompts.get("masks") or {}
+        global_p = prompts.get("global") or {}
+
+        def _extract(obj) -> tuple[str, str]:
+            if not isinstance(obj, dict):
+                return "", ""
+            return str(obj.get("positive") or ""), str(obj.get("negative") or "")
+
+        if scope and isinstance(masks, dict) and scope in masks:
+            pos, neg = _extract(masks.get(scope))
+            if pos.strip() or neg.strip():
+                return pos, neg
+
+        if scope is None and isinstance(masks, dict) and "default" in masks:
+            pos, neg = _extract(masks.get("default"))
+            if pos.strip() or neg.strip():
+                return pos, neg
+
+        pos, neg = _extract(global_p)
+        return pos, neg
     
     def _answer_questions(self, image_path: str) -> Dict:
         """Answer all questions from rules.yaml about the generated image in a single batch request."""
@@ -523,6 +557,32 @@ class IterativeImagination:
         inpaint_mode = bool(mask_filename)
         if inpaint_mode and not bool(project_cfg.get("lock_seed_inpaint", False)):
             lock_seed = False
+
+        # If AIGen.yaml prompts are empty, initialise from rules.yaml base prompts (global or per-mask).
+        prompts_cfg = aigen_config.get("prompts") or {}
+        if not isinstance(prompts_cfg, dict):
+            prompts_cfg = {}
+        cur_pos = str(prompts_cfg.get("positive") or "").strip()
+        cur_neg = str(prompts_cfg.get("negative") or "").strip()
+        if not cur_pos or not cur_neg:
+            scope_for_prompts = active_mask_name if active_mask_name else None
+            base_pos, base_neg = self._get_rules_base_prompts(scope_for_prompts)
+            changed = False
+            if not cur_pos and (base_pos or "").strip():
+                prompts_cfg["positive"] = base_pos
+                changed = True
+            if not cur_neg and (base_neg or "").strip():
+                prompts_cfg["negative"] = base_neg
+                changed = True
+            if changed:
+                aigen_config["prompts"] = prompts_cfg
+                try:
+                    self.project.save_aigen_config(aigen_config)
+                except Exception:
+                    pass
+                self.logger.info(
+                    f"Initialised prompts from rules.yaml prompts (scope={scope_for_prompts or 'default/global'})."
+                )
         
         # Load and update workflow
         # If a mask is present, prefer an inpaint workflow (project-local first, then defaults).

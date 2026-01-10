@@ -20,6 +20,7 @@ wheels/
 .installed.cfg
 *.egg
 MANIFEST
+.viewer.pid
 
 # Source directory (tracked, but ignore cache)
 src/__pycache__/
@@ -46,6 +47,14 @@ archive/
 projects/*/working/
 projects/*/logs/
 projects/*/output/
+
+# Project input artefacts (user data)
+projects/*/input/mask*.png
+projects/*/input/masks/
+projects/*/input/*.anchor.json
+
+# rules.yaml backups created by the viewer API
+projects/*/config/rules.yaml.bak.*
 
 # Restricted projects (sensitive content) - EXCLUDE these
 projects/restricted*/

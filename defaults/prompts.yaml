@@ -127,6 +127,32 @@ improve_prompts: |
       "negative": "<improved negative prompt>"
   }}
 
+generate_base_prompts: |
+  You are generating a CLEAN starting positive and negative prompt for Stable Diffusion img2img/inpainting.
+  
+  Context:
+  - ORIGINAL IMAGE DESCRIPTION (what we are starting from):
+    {original_description}
+  - SCOPE:
+    {scope}
+  
+  ACTIVE CRITERIA (authoritative):
+  {active_criteria_text}
+  
+  Rules:
+  - The positive prompt MUST include all must_include terms from the active criteria (or obvious close variants).
+  - The negative prompt MUST include all ban_terms from the active criteria (or obvious close variants).
+  - Avoid putting must_include terms into the negative prompt.
+  - Avoid putting ban_terms into the positive prompt.
+  - If criteria ask to preserve identity/pose/background/body proportions, explicitly include those preserve tags in the positive prompt.
+  - Output short comma-separated tags/phrases only. No full sentences. No "no X"/"not X" phrases.
+  
+  Output JSON ONLY:
+  {{
+      "positive": "<comma-separated tags>",
+      "negative": "<comma-separated tags>"
+  }}
+
 suggest_rules_tags: |
   You are a YAML configuration reviewer. Your job is to improve the data-driven tags for each acceptance criterion in a rules.yaml file.
   
