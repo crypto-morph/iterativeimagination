@@ -62,6 +62,7 @@
                     <div class="mask-canvas-wrap">
                         <img id="baseImg" class="mask-base" src="/api/project/{{ project_name }}/input/image" alt="Input">
                         <canvas id="maskCanvas" class="mask-canvas"></canvas>
+                        <div id="anchorMarker" class="anchor-marker hidden" title="Anchor point"></div>
                     </div>
                     <div class="mask-help">
                         <h3>Tips</h3>
@@ -70,7 +71,13 @@
                             <li>Feather the edges a bit (use a larger brush) for smoother blends.</li>
                             <li>Default mask saves to <code>input/mask.png</code>. Named masks save to <code>input/masks/&lt;name&gt;.png</code>.</li>
                             <li><code>Fill white</code> makes the whole image editable (useful for testing, but often better to run without masking for full-frame changes).</li>
+                            <li><strong>Alt+Click</strong> sets an anchor point (x,y) used to disambiguate “which person” for Suggest.</li>
                         </ul>
+                        <div style="margin-top:10px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                            <span class="muted">Anchor:</span>
+                            <span id="anchorText" class="muted">none</span>
+                            <button id="btnClearAnchor" class="btn">Clear anchor</button>
+                        </div>
                     </div>
                 </div>
             </section>

@@ -11,6 +11,7 @@ let tool = "brush"; // brush|eraser
 let drawing = false;
 let scaleX = 1;
 let scaleY = 1;
+let anchor = null; // {x,y} in image pixel coords
 
 function setStatus(text) {
   $("maskStatus").textContent = text || "";
@@ -96,6 +97,63 @@ function resizeCanvasToImage() {
   const ctx = canvas.getContext("2d");
   ctx.fillStyle = "rgb(0,0,0)";
   ctx.fillRect(0, 0, w, h);
+
+  updateAnchorMarker();
+}
+
+function setAnchor(a) {
+  if (!a) {
+    anchor = null;
+  } else {
+    anchor = { x: Math.round(a.x), y: Math.round(a.y) };
+  }
+  updateAnchorMarker();
+  const t = $("anchorText");
+  if (t) t.textContent = anchor ? `${anchor.x}, ${anchor.y}` : "none";
+}
+
+function updateAnchorMarker() {
+  const m = $("anchorMarker");
+  if (!m) return;
+  if (!anchor) {
+    m.classList.add("hidden");
+    return;
+  }
+  m.classList.remove("hidden");
+  // Convert image px -> displayed px
+  const xCss = anchor.x / scaleX;
+  const yCss = anchor.y / scaleY;
+  m.style.left = `${xCss}px`;
+  m.style.top = `${yCss}px`;
+}
+
+async function loadAnchor() {
+  try {
+    const res = await fetch(`/api/project/${project}/input/mask_anchor/${encodeURIComponent(maskName)}`, { cache: "no-store" });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data && data.anchor) setAnchor(data.anchor);
+    else setAnchor(null);
+  } catch (e) {
+    setAnchor(null);
+  }
+}
+
+async function saveAnchor() {
+  try {
+    await fetch(`/api/project/${project}/input/mask_anchor/${encodeURIComponent(maskName)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ anchor })
+    });
+  } catch (e) {
+    // non-fatal
+  }
+}
+
+async function clearAnchor() {
+  setAnchor(null);
+  await saveAnchor();
+  setStatus("Anchor cleared.");
 }
 
 function pointFromEvent(ev) {
@@ -136,6 +194,15 @@ function drawAt(x, y) {
 }
 
 function startDraw(ev) {
+  // Alt+Click sets an anchor point instead of drawing.
+  if (ev && ev.altKey) {
+    const p = pointFromEvent(ev);
+    setAnchor(p);
+    saveAnchor();
+    setStatus(`Anchor set to ${anchor.x}, ${anchor.y}`);
+    ev.preventDefault();
+    return;
+  }
   drawing = true;
   const p = pointFromEvent(ev);
   drawAt(p.x, p.y);
@@ -228,7 +295,7 @@ async function suggestMask() {
     const res = await fetch(`/api/project/${project}/input/mask_suggest`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mask_name: maskName, query: text, threshold: 0.30, focus })
+      body: JSON.stringify({ mask_name: maskName, query: text, threshold: 0.30, focus, anchor })
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -292,6 +359,7 @@ function wire() {
     const n = ev.target.value;
     setMaskName(n);
     clearMask();
+    await loadAnchor();
     await loadExistingMask();
   });
   $("btnCreateMask").addEventListener("click", createMask);
@@ -302,6 +370,8 @@ function wire() {
   $("btnClear").addEventListener("click", clearMask);
   const fillBtn = $("btnFillWhite");
   if (fillBtn) fillBtn.addEventListener("click", fillWhite);
+  const clearAnchorBtn = $("btnClearAnchor");
+  if (clearAnchorBtn) clearAnchorBtn.addEventListener("click", clearAnchor);
   $("btnLoad").addEventListener("click", loadExistingMask);
   $("btnSave").addEventListener("click", saveMask);
 
@@ -320,7 +390,10 @@ function init() {
   img.addEventListener("load", () => {
     resizeCanvasToImage();
     // Try load existing mask automatically (non-fatal).
-    refreshMaskList().then(loadExistingMask);
+    refreshMaskList().then(async () => {
+      await loadAnchor();
+      await loadExistingMask();
+    });
   });
   wire();
   setActiveTool("brush");

@@ -48,6 +48,19 @@ body {
     opacity: 0.45;
 }
 
+.anchor-marker {
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    border-radius: 999px;
+    border: 2px solid rgba(255, 60, 60, 0.95);
+    background: rgba(255, 60, 60, 0.25);
+    box-shadow: 0 0 0 2px rgba(0,0,0,0.35);
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    z-index: 3;
+}
+
 .mask-toolbar {
     display: flex;
     gap: 10px;

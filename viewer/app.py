@@ -352,6 +352,7 @@ def suggest_mask(project_name: str):
     query = payload.get("query") or payload.get("text") or payload.get("prompt") or ""
     threshold = payload.get("threshold", 0.30)
     focus = payload.get("focus")  # auto|left|middle|right|none
+    anchor = payload.get("anchor")
 
     if not isinstance(query, str) or not query.strip():
         return jsonify({"error": "Missing query text"}), 400
@@ -378,6 +379,7 @@ def suggest_mask(project_name: str):
             "query": query.strip(),
             "threshold": threshold_f,
             "focus": str(focus) if focus is not None else "auto",
+            "anchor": anchor if isinstance(anchor, dict) else None,
             "status": "queued",
             "message": "queued",
             "created_at": time.time(),
@@ -493,6 +495,18 @@ def suggest_mask(project_name: str):
                     focus_eff = mn
             raw = _apply_focus_to_mask_png(raw, focus_eff)
 
+            # If an anchor is provided (or saved), keep only the component that matches it.
+            anchor_eff = anchor if isinstance(anchor, dict) else None
+            if anchor_eff is None:
+                try:
+                    ap = _anchor_path(project_dir, mname)
+                    if ap.exists():
+                        anchor_eff = (json.loads(ap.read_text(encoding="utf-8")) or {}).get("anchor")
+                except Exception:
+                    anchor_eff = None
+            if isinstance(anchor_eff, dict):
+                raw = _apply_anchor_component_to_mask_png(raw, anchor_eff)
+
             # Save result into project
             input_dir = project_dir / "input"
             if mname == "default":
@@ -580,6 +594,155 @@ def _safe_mask_name(mask_name: str) -> str:
     if not re.match(r"^[a-zA-Z0-9_-]+$", name):
         raise ValueError("Invalid mask name")
     return name
+
+
+def _anchor_path(project_dir: Path, mask_name: str) -> Path:
+    """Path to store anchor metadata for a mask."""
+    input_dir = project_dir / "input"
+    if mask_name == "default":
+        return input_dir / "mask.anchor.json"
+    return input_dir / "masks" / f"{mask_name}.anchor.json"
+
+
+@app.route('/api/project/<project_name>/input/mask_anchor/<mask_name>', methods=['GET'])
+def get_mask_anchor(project_name: str, mask_name: str):
+    """Get the saved anchor point for a mask (if any)."""
+    try:
+        project_dir = _safe_project_dir(project_name)
+        mname = _safe_mask_name(mask_name)
+    except Exception:
+        return jsonify({"error": "Invalid project or mask"}), 400
+
+    p = _anchor_path(project_dir, mname)
+    if not p.exists():
+        return jsonify({"ok": True, "mask_name": mname, "anchor": None}), 200
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        a = data.get("anchor") if isinstance(data, dict) else None
+        if isinstance(a, dict) and "x" in a and "y" in a:
+            return jsonify({"ok": True, "mask_name": mname, "anchor": {"x": int(a["x"]), "y": int(a["y"])}}), 200
+        return jsonify({"ok": True, "mask_name": mname, "anchor": None}), 200
+    except Exception:
+        return jsonify({"ok": True, "mask_name": mname, "anchor": None}), 200
+
+
+@app.route('/api/project/<project_name>/input/mask_anchor/<mask_name>', methods=['POST'])
+def set_mask_anchor(project_name: str, mask_name: str):
+    """Set or clear the anchor point for a mask.
+
+    Payload:
+      { "anchor": { "x": 123, "y": 456 } }  OR  { "anchor": null }
+    """
+    payload = request.get_json(silent=True) or {}
+    anchor = payload.get("anchor")
+    try:
+        project_dir = _safe_project_dir(project_name)
+        mname = _safe_mask_name(mask_name)
+    except Exception:
+        return jsonify({"error": "Invalid project or mask"}), 400
+
+    p = _anchor_path(project_dir, mname)
+    p.parent.mkdir(parents=True, exist_ok=True)
+
+    if anchor is None:
+        try:
+            p.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return jsonify({"ok": True, "mask_name": mname, "anchor": None}), 200
+
+    if not isinstance(anchor, dict) or "x" not in anchor or "y" not in anchor:
+        return jsonify({"error": "Expected {anchor: {x, y}} or {anchor: null}"}), 400
+    try:
+        x = int(anchor.get("x"))
+        y = int(anchor.get("y"))
+    except Exception:
+        return jsonify({"error": "anchor.x and anchor.y must be integers"}), 400
+
+    try:
+        p.write_text(json.dumps({"anchor": {"x": x, "y": y}}, indent=2), encoding="utf-8")
+    except Exception as e:
+        return jsonify({"error": f"Failed to save anchor: {e}"}), 500
+    return jsonify({"ok": True, "mask_name": mname, "anchor": {"x": x, "y": y}}), 200
+
+
+def _apply_anchor_component_to_mask_png(raw_png: bytes, anchor: dict | None) -> bytes:
+    """Keep only the connected component that contains (or is nearest to) the anchor point."""
+    if not raw_png or not isinstance(anchor, dict):
+        return raw_png
+    try:
+        ax = int(anchor.get("x"))
+        ay = int(anchor.get("y"))
+    except Exception:
+        return raw_png
+
+    try:
+        from PIL import Image  # type: ignore
+        import io
+        import numpy as np  # type: ignore
+        from collections import deque
+
+        img = Image.open(io.BytesIO(raw_png)).convert("L")
+        arr = np.array(img)
+        h, w = arr.shape[:2]
+        if ax < 0 or ay < 0 or ax >= w or ay >= h:
+            return raw_png
+
+        mask = arr >= 128
+        if not mask.any():
+            return raw_png
+
+        sy, sx = ay, ax
+        if not mask[sy, sx]:
+            found = False
+            # Search for nearest white pixel in expanding squares
+            for r in range(1, 90):
+                y0 = max(0, sy - r)
+                y1 = min(h, sy + r + 1)
+                x0 = max(0, sx - r)
+                x1 = min(w, sx + r + 1)
+                window = mask[y0:y1, x0:x1]
+                idx = np.argwhere(window)
+                if idx.size:
+                    coords = idx + np.array([y0, x0])
+                    dy = coords[:, 0] - sy
+                    dx = coords[:, 1] - sx
+                    i = int(np.argmin(dx * dx + dy * dy))
+                    sy, sx = int(coords[i, 0]), int(coords[i, 1])
+                    found = True
+                    break
+            if not found:
+                return raw_png
+
+        out = np.zeros((h, w), dtype=np.uint8)
+        q = deque([(sy, sx)])
+        mask[sy, sx] = False
+        out[sy, sx] = 255
+        while q:
+            y, x = q.popleft()
+            if y > 0 and mask[y - 1, x]:
+                mask[y - 1, x] = False
+                out[y - 1, x] = 255
+                q.append((y - 1, x))
+            if y + 1 < h and mask[y + 1, x]:
+                mask[y + 1, x] = False
+                out[y + 1, x] = 255
+                q.append((y + 1, x))
+            if x > 0 and mask[y, x - 1]:
+                mask[y, x - 1] = False
+                out[y, x - 1] = 255
+                q.append((y, x - 1))
+            if x + 1 < w and mask[y, x + 1]:
+                mask[y, x + 1] = False
+                out[y, x + 1] = 255
+                q.append((y, x + 1))
+
+        out_img = Image.fromarray(out, mode="L")
+        buf = io.BytesIO()
+        out_img.save(buf, format="PNG")
+        return buf.getvalue()
+    except Exception:
+        return raw_png
 
 
 def _apply_focus_to_mask_png(raw_png: bytes, focus: str | None) -> bytes:
