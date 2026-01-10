@@ -231,14 +231,28 @@ function renderQuestions() {
   const q = getQuestions();
   const el = $("questionsList");
   if (!q.length) {
-    el.textContent = "No questions configured.";
+    el.innerHTML = '<p class="has-text-grey">No questions configured.</p>';
     return;
   }
   const items = q.map(x => {
     const f = escapeHtml(String(x.field || ""));
     const qt = escapeHtml(String(x.question || ""));
     const t = escapeHtml(String(x.type || "string"));
-    return `<div class="question-item"><span class="mono">${f}</span> <span class="muted">(${t})</span><div class="muted">${qt}</div></div>`;
+    return `
+      <div class="box py-3 px-4 mb-3">
+        <div class="level mb-2">
+          <div class="level-left">
+            <div class="level-item">
+              <span class="is-family-monospace has-text-weight-bold">${f}</span>
+            </div>
+            <div class="level-item">
+              <span class="tag is-light">${t}</span>
+            </div>
+          </div>
+        </div>
+        <p class="is-size-7 has-text-grey">${qt}</p>
+      </div>
+    `;
   });
   el.innerHTML = items.join("");
 }
