@@ -427,6 +427,126 @@ def run_imagination(args):
         return 1
 
 
+def run_masks(args):
+    """Run a project with all masks sequentially (useful for multi-mask projects)."""
+    proj_dir = SCRIPT_DIR / "projects" / args.project
+    if not proj_dir.exists():
+        print(f"✗ Project not found: {proj_dir}")
+        return 1
+
+    config_aigen_path = proj_dir / "config" / "AIGen.yaml"
+    config_rules_path = proj_dir / "config" / "rules.yaml"
+    working_dir = proj_dir / "working"
+    working_dir.mkdir(parents=True, exist_ok=True)
+    working_aigen_path = working_dir / "AIGen.yaml"
+    checkpoint_path = working_dir / "checkpoint.json"
+
+    # Load base config
+    if config_aigen_path.exists():
+        with open(config_aigen_path, "r", encoding="utf-8") as f:
+            base_aigen = yaml.safe_load(f) or {}
+    else:
+        with open(SCRIPT_DIR / "defaults" / "config" / "AIGen.yaml", "r", encoding="utf-8") as f:
+            base_aigen = yaml.safe_load(f) or {}
+
+    # Detect masks from rules.yaml
+    mask_names = []
+    if args.masks:
+        mask_names = [m.strip() for m in args.masks.split(",") if m.strip()]
+    else:
+        # Auto-detect from rules.yaml
+        if config_rules_path.exists():
+            with open(config_rules_path, "r", encoding="utf-8") as f:
+                rules = yaml.safe_load(f) or {}
+            masking = rules.get("masking", {})
+            masks = masking.get("masks", [])
+            if isinstance(masks, list):
+                for m in masks:
+                    if isinstance(m, dict):
+                        name = str(m.get("name", "")).strip()
+                        if name and name != "default":  # Skip default mask
+                            mask_names.append(name)
+            elif isinstance(masks, dict):
+                for name in masks.keys():
+                    if str(name).strip() != "default":
+                        mask_names.append(str(name).strip())
+
+    if not mask_names:
+        print("⚠ No masks found in rules.yaml. Use --masks to specify manually.")
+        return 1
+
+    print(f"✓ Found {len(mask_names)} mask(s): {', '.join(mask_names)}")
+
+    # Prefer the ComfyUI venv python if available
+    venv_python = COMFYUI_DIR / "venv" / "bin" / "python"
+    python_cmd = str(venv_python) if venv_python.exists() else sys.executable
+    script_path = SCRIPT_DIR / "iterative_imagination.py"
+
+    results = []
+
+    for mask_name in mask_names:
+        print(f"\n{'='*60}")
+        print(f"Running mask: {mask_name}")
+        print(f"{'='*60}")
+
+        # Reset checkpoint between masks
+        try:
+            if checkpoint_path.exists():
+                checkpoint_path.unlink()
+        except Exception as e:
+            print(f"⚠ Failed to remove checkpoint.json: {e}")
+
+        # Set active_mask in working/AIGen.yaml
+        aigen = json.loads(json.dumps(base_aigen))
+        aigen.setdefault("masking", {})
+        aigen["masking"]["enabled"] = True
+        aigen["masking"]["active_mask"] = mask_name
+
+        with open(working_aigen_path, "w", encoding="utf-8") as f:
+            yaml.dump(aigen, f, default_flow_style=False, sort_keys=False)
+
+        if args.dry_run:
+            print(f"  [DRY RUN] Would run with mask: {mask_name}")
+            results.append({"mask": mask_name, "status": "dry_run"})
+            continue
+
+        # Run iterative_imagination.py
+        cmd = [python_cmd, str(script_path), "--project", args.project]
+        if args.verbose:
+            cmd.append("--verbose")
+
+        try:
+            result = subprocess.run(cmd, cwd=SCRIPT_DIR, check=False)
+            status = "success" if result.returncode == 0 else "failed"
+            results.append({"mask": mask_name, "status": status, "exit_code": result.returncode})
+            
+            if result.returncode != 0:
+                print(f"✗ Mask '{mask_name}' failed (exit code: {result.returncode})")
+                if args.stop_on_error:
+                    print("Stopping due to --stop-on-error")
+                    break
+            else:
+                print(f"✓ Mask '{mask_name}' completed")
+        except Exception as e:
+            print(f"✗ Error running mask '{mask_name}': {e}")
+            results.append({"mask": mask_name, "status": "error", "error": str(e)})
+            if args.stop_on_error:
+                break
+
+    # Summary
+    print(f"\n{'='*60}")
+    print("Summary:")
+    print(f"{'='*60}")
+    for r in results:
+        status_icon = "✓" if r["status"] == "success" else "✗"
+        print(f"  {status_icon} {r['mask']}: {r['status']}")
+    
+    success_count = sum(1 for r in results if r["status"] == "success")
+    print(f"\nCompleted: {success_count}/{len(results)} masks")
+    
+    return 0 if success_count == len(results) else 1
+
+
 def run_variants(args):
     """Run a project multiple times with different workflow variants (useful for A/B testing)."""
     proj_dir = SCRIPT_DIR / "projects" / args.project
@@ -1000,6 +1120,14 @@ Examples:
     variants_parser.add_argument('--stop-on-error', dest='stop_on_error', action='store_true', help='Stop on first variant failure')
     variants_parser.add_argument('--dry-run', dest='dry_run', action='store_true', help='Validate configs but do not run')
     variants_parser.add_argument('--verbose', action='store_true', help='Enable debug logging')
+
+    # Masks command (run all masks sequentially)
+    masks_parser = subparsers.add_parser('masks', help='Run a project with all masks sequentially (left → middle → right)')
+    masks_parser.add_argument('--project', type=str, required=True, help='Project name (projects/<name>)')
+    masks_parser.add_argument('--masks', type=str, help='Comma-separated mask names (default: auto-detect from rules.yaml)')
+    masks_parser.add_argument('--stop-on-error', dest='stop_on_error', action='store_true', help='Stop on first mask failure')
+    masks_parser.add_argument('--dry-run', dest='dry_run', action='store_true', help='Validate configs but do not run')
+    masks_parser.add_argument('--verbose', action='store_true', help='Enable debug logging')
 
     # Rules commands
     rules_parser = subparsers.add_parser('rules', help='Lint and AI-suggest tags for rules.yaml')
