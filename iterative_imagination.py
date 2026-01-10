@@ -1653,11 +1653,26 @@ class IterativeImagination:
                 
                 self.logger.info(f"{'='*60}\nProcessing mask: {mask_name} (criterion: {mask_criterion})\n{'='*60}")
                 
-                # Set active_mask in working/AIGen.yaml
+                # Set active_mask in working/AIGen.yaml and boost denoise/cfg for inpainting
                 aigen_config = self.project.load_aigen_config()
                 aigen_config.setdefault("masking", {})
                 aigen_config["masking"]["enabled"] = True
                 aigen_config["masking"]["active_mask"] = mask_name
+                
+                # Boost denoise/cfg for inpainting (masks allow higher edit strength)
+                params = aigen_config.get("parameters", {})
+                current_denoise = float(params.get("denoise", 0.5))
+                current_cfg = float(params.get("cfg", 7.0))
+                
+                # If denoise/cfg are at default or low values, boost them for inpainting
+                if current_denoise < 0.7:
+                    params["denoise"] = 0.75  # Start higher for inpainting
+                    self.logger.info(f"Boosted denoise to {params['denoise']} for inpainting (mask: {mask_name})")
+                if current_cfg < 9.0:
+                    params["cfg"] = 10.0  # Start higher for inpainting
+                    self.logger.info(f"Boosted cfg to {params['cfg']} for inpainting (mask: {mask_name})")
+                
+                aigen_config["parameters"] = params
                 self.project.save_aigen_config(aigen_config)
                 
                 mask_passed = False
