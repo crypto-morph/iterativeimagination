@@ -1309,10 +1309,44 @@ class IterativeImagination:
                 improved_positive = re.sub(rf"\\b{re.escape(t)}\\b", "", improved_positive, flags=re.IGNORECASE)
             improved_positive = re.sub(r"\\s{2,}", " ", improved_positive).strip(" ,\n")
 
-            # Ensure must-include terms appear in positive
-            for t in must_include_terms:
-                if t.lower() not in improved_positive.lower():
-                    improved_positive = (improved_positive + f", {t}").strip(" ,\n")
+            # Ensure must-include terms appear in positive (prioritize change terms at front)
+            # Separate change vs preserve intent terms
+            change_must_include = []
+            preserve_must_include = []
+            for crit in criteria_defs:
+                if not isinstance(crit, dict):
+                    continue
+                intent = str(crit.get("intent") or "preserve").strip().lower()
+                terms = crit.get("must_include") or []
+                if intent == "change":
+                    change_must_include.extend(terms)
+                else:
+                    preserve_must_include.extend(terms)
+            
+            # Extract existing parts, filter out must_include terms (we'll re-add in correct order)
+            pos_parts = [p.strip() for p in improved_positive.split(",") if p.strip()]
+            all_must_include_lower = [str(t).strip().lower() for t in (change_must_include + preserve_must_include) if t]
+            filtered_parts = []
+            for part in pos_parts:
+                part_lower = part.lower()
+                is_must_include = any(term_lower in part_lower or part_lower in term_lower for term_lower in all_must_include_lower)
+                if not is_must_include:
+                    filtered_parts.append(part)
+            
+            # Add change terms first (for weight), then preserve terms, then rest
+            change_terms_to_add = []
+            for t in change_must_include:
+                t_lower = str(t).strip().lower()
+                if not any(t_lower in p.lower() or p.lower() in t_lower for p in pos_parts):
+                    change_terms_to_add.append(str(t).strip())
+            
+            preserve_terms_to_add = []
+            for t in preserve_must_include:
+                t_lower = str(t).strip().lower()
+                if not any(t_lower in p.lower() or p.lower() in t_lower for p in pos_parts):
+                    preserve_terms_to_add.append(str(t).strip())
+            
+            improved_positive = ", ".join(change_terms_to_add + preserve_terms_to_add + filtered_parts).strip(" ,\n")
 
             # Ensure banned terms appear in negative
             if ban_terms:
