@@ -503,17 +503,6 @@ class IterativeImagination:
             # Resolve masks list (optional)
             resolved_mask_path: Optional[Path] = None
             masks = mask_cfg.get("masks")
-            
-            # Auto-detect masks from input/masks/ directory if masks list isn't defined
-            # but active_mask is set (convenience feature)
-            if not masks and active_mask_name:
-                masks_dir = self.project.project_root / "input" / "masks"
-                if masks_dir.exists() and masks_dir.is_dir():
-                    candidate_mask = masks_dir / f"{active_mask_name}.png"
-                    if candidate_mask.exists():
-                        resolved_mask_path = candidate_mask
-                        self.logger.info(f"Auto-detected mask: {candidate_mask}")
-            
             if masks:
                 # List form: [{name, file}, ...]
                 if isinstance(masks, list):
@@ -1628,46 +1617,161 @@ class IterativeImagination:
             self.run_id = self.project.create_run_id()
             self.logger.info(f"Run id: {self.run_id}")
 
-        iterations_run = 0
-        last_iteration_run: Optional[int] = None
+        # Detect masks and their associated criteria for sequential mask cycling
+        mask_sequence = []
+        masking_rules = self.rules.get("masking") if isinstance(self.rules, dict) else None
+        masks = (masking_rules.get("masks") if isinstance(masking_rules, dict) else None) if masking_rules else None
+        if isinstance(masks, list):
+            for m in masks:
+                if not isinstance(m, dict):
+                    continue
+                mask_name = str(m.get("name") or "").strip()
+                if mask_name and mask_name != "default":
+                    # Find the criterion field for this mask (e.g., left_outfit for left mask)
+                    active_criteria = m.get("active_criteria") or []
+                    mask_criterion = None
+                    for crit_field in active_criteria:
+                        # Look for outfit criteria (left_outfit, middle_outfit, right_outfit)
+                        if isinstance(crit_field, str) and "_outfit" in crit_field:
+                            mask_criterion = crit_field
+                            break
+                    if mask_criterion:
+                        mask_sequence.append({"name": mask_name, "criterion": mask_criterion})
+        
+        # If we have a mask sequence, cycle through them sequentially
+        if mask_sequence:
+            self.logger.info(f"Multi-mask mode: will cycle through {len(mask_sequence)} mask(s): {[m['name'] for m in mask_sequence]}")
+            iterations_run = 0
+            last_iteration_run: Optional[int] = None
+            current_iteration = start_iteration
+            mask_index = 0
+            
+            while mask_index < len(mask_sequence) and current_iteration <= max_iterations:
+                current_mask = mask_sequence[mask_index]
+                mask_name = current_mask["name"]
+                mask_criterion = current_mask["criterion"]
+                
+                self.logger.info(f"{'='*60}\nProcessing mask: {mask_name} (criterion: {mask_criterion})\n{'='*60}")
+                
+                # Set active_mask in working/AIGen.yaml
+                aigen_config = self.project.load_aigen_config()
+                aigen_config.setdefault("masking", {})
+                aigen_config["masking"]["enabled"] = True
+                aigen_config["masking"]["active_mask"] = mask_name
+                self.project.save_aigen_config(aigen_config)
+                
+                mask_passed = False
+                mask_iterations = 0
+                max_mask_iterations = max_iterations - current_iteration + 1  # Remaining iterations
+                
+                # Run iterations for this mask until criterion passes or iterations run out
+                for iteration in range(current_iteration, min(current_iteration + max_mask_iterations, max_iterations + 1)):
+                    last_iteration_run = iteration
+                    iterations_run += 1
+                    mask_iterations += 1
+                    current_iteration = iteration + 1
+                    
+                    iteration_result = self._run_iteration(iteration)
+                    if not iteration_result:
+                        self.logger.error("Iteration failed, stopping")
+                        break
+                    
+                    score = iteration_result['evaluation'].get('overall_score', 0)
+                    if score > self.best_score:
+                        self.best_score = score
+                        self.best_iteration = iteration
+                    
+                    # Save checkpoint after each iteration
+                    self.project.save_checkpoint(iteration, self.best_iteration, self.best_score, run_id=self.run_id)
+                    
+                    # Check if this mask's specific criterion passed
+                    criteria_results = iteration_result.get('evaluation', {}).get('criteria_results', {})
+                    criterion_passed = criteria_results.get(mask_criterion, False)
+                    
+                    if criterion_passed:
+                        self.logger.info(f"{'='*60}\nMask '{mask_name}' criterion '{mask_criterion}' PASSED! (Iteration {iteration})\n{'='*60}")
+                        mask_passed = True
+                        # Update progress image for next mask
+                        try:
+                            progress_path = self.project.project_root / "input" / "progress.png"
+                            progress_path.parent.mkdir(parents=True, exist_ok=True)
+                            iteration_paths = self.project.get_iteration_paths(iteration, run_id=self.run_id)
+                            shutil.copy2(iteration_paths['image'], progress_path)
+                            self.logger.info(f"Updated progress image for next mask: {progress_path}")
+                        except Exception:
+                            pass
+                        # Don't apply improvements when mask passes - move to next mask
+                        break
+                    
+                    # Check if we've achieved perfect score (all criteria pass)
+                    if score >= 100:
+                        self.logger.info(f"{'='*60}\nPerfect score achieved! (Score: {score}%)\n{'='*60}")
+                        shutil.copy2(self.project.get_iteration_paths(iteration, run_id=self.run_id)['image'], output_paths['image'])
+                        try:
+                            progress_path = self.project.project_root / "input" / "progress.png"
+                            progress_path.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(output_paths['image'], progress_path)
+                            self.logger.info(f"Updated progress image: {progress_path}")
+                        except Exception:
+                            pass
+                        with open(output_paths['metadata'], 'w', encoding='utf-8') as f:
+                            json.dump({"final_iteration": iteration, "final_score": score, "metadata": iteration_result}, f, indent=2)
+                        mask_passed = True  # All masks passed
+                        break
+                    
+                    # Apply improvements for next iteration (only if mask hasn't passed yet)
+                    if iteration < max_iterations:
+                        self._apply_improvements(iteration_result)
+                        time.sleep(2)
+                
+                if not mask_passed:
+                    self.logger.warning(f"Mask '{mask_name}' did not pass after {mask_iterations} iteration(s). Moving to next mask anyway.")
+                
+                # Move to next mask
+                mask_index += 1
+                if current_iteration > max_iterations:
+                    break
+        else:
+            # Single mask or no mask mode - original behavior
+            iterations_run = 0
+            last_iteration_run: Optional[int] = None
 
-        for iteration in range(start_iteration, max_iterations + 1):
-            last_iteration_run = iteration
-            iterations_run += 1
-            iteration_result = self._run_iteration(iteration)
-            if not iteration_result:
-                self.logger.error("Iteration failed, stopping")
-                break
-            
-            score = iteration_result['evaluation'].get('overall_score', 0)
-            if score > self.best_score:
-                self.best_score = score
-                self.best_iteration = iteration
-            
-            # Check if we've achieved perfect score
-            if score >= 100:
-                self.logger.info(f"{'='*60}\nPerfect score achieved! (Score: {score}%)\n{'='*60}")
-                iteration_paths = self.project.get_iteration_paths(iteration, run_id=self.run_id)
-                shutil.copy2(iteration_paths['image'], output_paths['image'])
-                # Also update input/progress.png so multi-pass edits can chain without overwriting input/input.png.
-                try:
-                    progress_path = self.project.project_root / "input" / "progress.png"
-                    progress_path.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(output_paths['image'], progress_path)
-                    self.logger.info(f"Updated progress image: {progress_path}")
-                except Exception:
-                    pass
-                with open(output_paths['metadata'], 'w', encoding='utf-8') as f:
-                    json.dump({"final_iteration": iteration, "final_score": score, "metadata": iteration_result}, f, indent=2)
-                break
-            
-            # Save checkpoint after each iteration
-            self.project.save_checkpoint(iteration, self.best_iteration, self.best_score, run_id=self.run_id)
-            
-            # Apply improvements for next iteration
-            if iteration < max_iterations:
-                self._apply_improvements(iteration_result)
-                time.sleep(2)
+            for iteration in range(start_iteration, max_iterations + 1):
+                last_iteration_run = iteration
+                iterations_run += 1
+                iteration_result = self._run_iteration(iteration)
+                if not iteration_result:
+                    self.logger.error("Iteration failed, stopping")
+                    break
+                
+                score = iteration_result['evaluation'].get('overall_score', 0)
+                if score > self.best_score:
+                    self.best_score = score
+                    self.best_iteration = iteration
+                
+                # Check if we've achieved perfect score
+                if score >= 100:
+                    self.logger.info(f"{'='*60}\nPerfect score achieved! (Score: {score}%)\n{'='*60}")
+                    shutil.copy2(self.project.get_iteration_paths(iteration, run_id=self.run_id)['image'], output_paths['image'])
+                    # Also update input/progress.png so multi-pass edits can chain without overwriting input/input.png.
+                    try:
+                        progress_path = self.project.project_root / "input" / "progress.png"
+                        progress_path.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(output_paths['image'], progress_path)
+                        self.logger.info(f"Updated progress image: {progress_path}")
+                    except Exception:
+                        pass
+                    with open(output_paths['metadata'], 'w', encoding='utf-8') as f:
+                        json.dump({"final_iteration": iteration, "final_score": score, "metadata": iteration_result}, f, indent=2)
+                    break
+                
+                # Save checkpoint after each iteration
+                self.project.save_checkpoint(iteration, self.best_iteration, self.best_score, run_id=self.run_id)
+                
+                # Apply improvements for next iteration
+                if iteration < max_iterations:
+                    self._apply_improvements(iteration_result)
+                    time.sleep(2)
         
         # Summary
         self.logger.info(f"{'='*60}\nIteration Loop Complete\n{'='*60}")
