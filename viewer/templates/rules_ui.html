@@ -4,265 +4,481 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Rules UI - {{ project_name }}</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .rulesui-container {
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+        .rulesui-tabs {
+            border-bottom: 2px solid #e5e7eb;
+            margin-bottom: 1.5rem;
+        }
+        .rulesui-tab {
+            padding: 0.75rem 1.5rem;
+            cursor: pointer;
+            border-bottom: 3px solid transparent;
+            color: #6b7280;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+        .rulesui-tab:hover {
+            color: #374151;
+            border-bottom-color: #d1d5db;
+        }
+        .rulesui-tab.is-active {
+            color: #2563eb;
+            border-bottom-color: #2563eb;
+        }
+        .rulesui-tab-content {
+            display: none;
+        }
+        .rulesui-tab-content.is-active {
+            display: block;
+        }
+        .scope-preview-img {
+            max-width: 100%;
+            border-radius: 8px;
+            border: 1px solid #e5e7eb;
+        }
+        .crit-card {
+            background: white;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 0.75rem;
+            margin-bottom: 0.5rem;
+            cursor: move;
+            transition: all 0.2s;
+        }
+        .crit-card:hover {
+            border-color: #2563eb;
+            box-shadow: 0 2px 4px rgba(37, 99, 235, 0.1);
+        }
+        .crit-card.inactive {
+            opacity: 0.5;
+            background: #f9fafb;
+        }
+        .board-col {
+            min-height: 300px;
+            background: #f9fafb;
+            border: 2px dashed #d1d5db;
+            border-radius: 8px;
+            padding: 1rem;
+        }
+        .board-col.drop-hover {
+            border-color: #2563eb;
+            background: #eff6ff;
+        }
+        .code-textarea {
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 0.875rem;
+            line-height: 1.5;
+        }
+    </style>
 </head>
 <body>
-    <div class="container">
-        <header>
-            <div style="display:flex; gap:12px; align-items:baseline; justify-content:space-between;">
-                <div>
-                    <h1>Rules UI: {{ project_name }}</h1>
-                    <p>Structured editor for <code>config/rules.yaml</code> (mask-aware acceptance criteria).</p>
-                </div>
-                <div style="display:flex; gap:10px; flex-wrap:wrap;">
-                    <a class="btn" href="/project/{{ project_name }}/mask">Mask editor</a>
-                    <a class="btn" href="/project/{{ project_name }}/live">Live run</a>
-                    <a class="btn" href="/">Back</a>
+    <div class="rulesui-container">
+        <nav class="navbar is-light" style="margin-bottom: 1.5rem;">
+            <div class="navbar-brand">
+                <div class="navbar-item">
+                    <h1 class="title is-4">Rules UI: {{ project_name }}</h1>
                 </div>
             </div>
-        </header>
-
-        <main>
-            <section class="rulesui-toolbar">
-                <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-                    <button id="btnReload" class="btn">Reload</button>
-                    <button id="btnSave" class="btn primary" disabled>Save rules.yaml</button>
-                    <button id="btnGenPrompts" class="btn">Generate base prompts</button>
-                    <button id="btnShowYaml" class="btn">YAML</button>
-                    <span id="rulesuiStatus" class="muted"></span>
+            <div class="navbar-menu">
+                <div class="navbar-end">
+                    <div class="navbar-item">
+                        <div class="buttons">
+                            <a class="button is-light" href="/project/{{ project_name }}/mask">
+                                <span class="icon"><i class="fas fa-draw-polygon"></i></span>
+                                <span>Mask editor</span>
+                            </a>
+                            <a class="button is-light" href="/project/{{ project_name }}/live">
+                                <span class="icon"><i class="fas fa-play"></i></span>
+                                <span>Live run</span>
+                            </a>
+                            <a class="button is-light" href="/">
+                                <span class="icon"><i class="fas fa-arrow-left"></i></span>
+                                <span>Back</span>
+                            </a>
+                        </div>
+                    </div>
                 </div>
-                <div id="rulesuiLint" class="lint-box hidden"></div>
-            </section>
+            </div>
+        </nav>
 
-            <section class="rulesui-layout" style="margin-top:14px;">
-                <aside class="rulesui-left">
-                    <details class="rulesui-details" open>
-                        <summary>Scope</summary>
-                        <div class="muted" style="margin-top:6px;">
-                            Pick a <strong>Mask: name</strong> to edit which criteria are active for that mask.
-                            Inactive criteria are shown grey at the bottom — click one to activate it for the current mask.
-                            <strong>Show all</strong> is just a view filter.
-                        </div>
-                        <div id="scopeList" class="scope-list" style="margin-top:10px;"></div>
-                        <div class="rulesui-scope-actions" style="margin-top:10px;">
-                            <a id="btnEditMask" class="btn" href="/project/{{ project_name }}/mask?mask=default">Edit selected mask</a>
-                            <label class="muted">New mask:
-                                <input id="newMaskNameRulesUI" type="text" placeholder="left / middle / right" style="width:160px;">
-                            </label>
-                            <button id="btnCreateMaskRulesUI" class="btn">Create & draw</button>
-                        </div>
-                        <div class="muted" style="margin-top:8px;">
-                            Tip: <strong>default</strong> saves to <code>input/mask.png</code>. Named masks save to <code>input/masks/&lt;name&gt;.png</code>.
-                        </div>
-                    </details>
-
-                    <details class="rulesui-details" open style="margin-top:12px;">
-                        <summary>Scope preview</summary>
-                        <div class="muted" style="margin-top:6px;">Shows the currently selected mask overlay.</div>
-                        <div class="mask-preview" style="margin-top:10px;">
-                            <div class="mask-canvas-wrap">
-                                <img id="scopeBaseImg" class="mask-base" src="/api/project/{{ project_name }}/input/image" alt="Input">
-                                <img id="scopeMaskImg" class="mask-canvas" src="" alt="Mask overlay">
-                            </div>
-                        </div>
-                    </details>
-
-                    <details class="rulesui-details" style="margin-top:12px;">
-                        <summary>Project settings (global)</summary>
-                        <div class="muted" style="margin-top:6px;">These apply to the whole run (all masks).</div>
-                        <div class="form-grid">
-                            <label class="muted">Max iterations
-                                <input id="projMaxIterations" type="number" min="1" max="50" value="20">
-                            </label>
-                            <label class="muted">Preserve heavy
-                                <select id="projPreserveHeavy">
-                                    <option value="auto">auto</option>
-                                    <option value="true">true</option>
-                                    <option value="false">false</option>
-                                </select>
-                            </label>
-                            <label class="muted">Lock seed
-                                <select id="projLockSeed">
-                                    <option value="true">true</option>
-                                    <option value="false">false</option>
-                                </select>
-                            </label>
-                        </div>
-                    </details>
-
-                    <details class="rulesui-details" open style="margin-top:12px;">
-                        <summary>Base prompts (this scope)</summary>
-                        <div class="muted" style="margin-top:6px;">
-                            These are stored in <code>config/rules.yaml</code> under <code>prompts</code>.
-                            Click <strong>Generate base prompts</strong> to refresh them.
-                        </div>
-                        <label class="muted" style="margin-top:10px; display:block;">Positive
-                            <textarea id="scopePromptPositive" class="code-textarea" readonly style="min-height:90px;"></textarea>
-                        </label>
-                        <label class="muted" style="margin-top:10px; display:block;">Negative
-                            <textarea id="scopePromptNegative" class="code-textarea" readonly style="min-height:90px;"></textarea>
-                        </label>
-                    </details>
-
-                    <details class="rulesui-details" style="margin-top:12px;">
-                        <summary>Advanced: working prompts</summary>
-                        <div class="muted" style="margin-top:6px;">
-                            These edit <code>working/AIGen.yaml</code> prompts (what ComfyUI uses during a run).
-                            If you are using base prompts from <code>rules.yaml</code>, leave working prompts blank and regenerate base prompts instead.
-                        </div>
-                        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
-                            <button id="btnLoadWorkingPrompts" class="btn">Load working prompts</button>
-                            <button id="btnSaveWorkingPrompts" class="btn primary" disabled>Save working prompts</button>
-                            <span id="workingPromptsStatus" class="muted"></span>
-                        </div>
-                        <label class="muted" style="margin-top:10px; display:block;">Positive
-                            <textarea id="workingPromptPositive" class="code-textarea" style="min-height:90px;"></textarea>
-                        </label>
-                        <label class="muted" style="margin-top:10px; display:block;">Negative
-                            <textarea id="workingPromptNegative" class="code-textarea" style="min-height:90px;"></textarea>
-                        </label>
-                    </details>
-
-                    <details class="rulesui-details" style="margin-top:12px;">
-                        <summary>Advanced: AIGen.yaml (engine config)</summary>
-                        <div class="muted" style="margin-top:6px;">
-                            This edits <code>config/AIGen.yaml</code> (defaults for new runs). The runner still writes iteration changes into <code>working/AIGen.yaml</code>.
-                        </div>
-                        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
-                            <button id="btnLoadAigenCfg" class="btn">Load AIGen.yaml</button>
-                            <button id="btnSaveAigenCfg" class="btn primary" disabled>Save AIGen.yaml</button>
-                            <span id="aigenCfgStatus" class="muted"></span>
-                        </div>
-                        <textarea id="aigenCfgBox" class="code-textarea" placeholder="Click 'Load AIGen.yaml' to edit..." style="min-height:200px;"></textarea>
-                    </details>
-
-                    <details class="rulesui-details" style="margin-top:12px;">
-                        <summary>Advanced: AIVis.yaml (vision config)</summary>
-                        <div class="muted" style="margin-top:6px;">
-                            This edits <code>config/AIVis.yaml</code>. Prefer using environment variables for API keys.
-                        </div>
-                        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
-                            <button id="btnLoadAiVisCfg" class="btn">Load AIVis.yaml</button>
-                            <button id="btnSaveAiVisCfg" class="btn primary" disabled>Save AIVis.yaml</button>
-                            <span id="aivisCfgStatus" class="muted"></span>
-                        </div>
-                        <textarea id="aivisCfgBox" class="code-textarea" placeholder="Click 'Load AIVis.yaml' to edit..." style="min-height:160px;"></textarea>
-                    </details>
-                </aside>
-
-                <section class="rulesui-main">
-                    <div class="rulesui-actions">
-                        <button id="btnAddCriterion" class="btn">Add criterion</button>
-                        <button id="btnAddQuestion" class="btn">Add question</button>
-                        <span class="muted">New items start in the current scope.</span>
+        <div class="box" style="margin-bottom: 1.5rem;">
+            <div class="level">
+                <div class="level-left">
+                    <div class="level-item">
+                        <button id="btnReload" class="button is-light">
+                            <span class="icon"><i class="fas fa-sync"></i></span>
+                            <span>Reload</span>
+                        </button>
                     </div>
-                    <div class="board">
-                        <div class="board-col" data-intent="change">
-                            <div class="board-col-header">
-                                <h3>Change goals</h3>
-                                <div class="muted">Drag criteria here</div>
-                            </div>
-                            <div id="colChange" class="board-col-body dropzone"></div>
-                        </div>
-                        <div class="board-col" data-intent="preserve">
-                            <div class="board-col-header">
-                                <h3>Preserve goals</h3>
-                                <div class="muted">Drag criteria here</div>
-                            </div>
-                            <div id="colPreserve" class="board-col-body dropzone"></div>
+                    <div class="level-item">
+                        <button id="btnSave" class="button is-primary" disabled>
+                            <span class="icon"><i class="fas fa-save"></i></span>
+                            <span>Save rules.yaml</span>
+                        </button>
+                    </div>
+                    <div class="level-item">
+                        <button id="btnGenPrompts" class="button is-light">
+                            <span class="icon"><i class="fas fa-magic"></i></span>
+                            <span>Generate base prompts</span>
+                        </button>
+                    </div>
+                    <div class="level-item">
+                        <button id="btnShowYaml" class="button is-light">
+                            <span class="icon"><i class="fas fa-code"></i></span>
+                            <span>YAML</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="level-right">
+                    <div class="level-item">
+                        <span id="rulesuiStatus" class="has-text-grey"></span>
+                    </div>
+                </div>
+            </div>
+            <div id="rulesuiLint" class="notification is-hidden"></div>
+        </div>
+
+        <!-- Scope selector (always visible) -->
+        <div class="box" style="margin-bottom: 1.5rem;">
+            <div class="columns">
+                <div class="column is-3">
+                    <h3 class="title is-6">Scope</h3>
+                    <p class="is-size-7 has-text-grey mb-3">Pick a mask to edit which criteria are active for that mask.</p>
+                    <div id="scopeList" class="buttons has-addons mb-3"></div>
+                    <div class="field is-grouped">
+                        <div class="control">
+                            <a id="btnEditMask" class="button is-small is-light" href="/project/{{ project_name }}/mask?mask=default">
+                                <span class="icon"><i class="fas fa-edit"></i></span>
+                                <span>Edit mask</span>
+                            </a>
                         </div>
                     </div>
-
-                    <details class="rulesui-details" style="margin-top:14px;">
-                        <summary>Questions</summary>
-                        <div id="questionsList" class="questions-list muted" style="margin-top:8px;"></div>
-                    </details>
-                </section>
-
-                <aside class="rulesui-right">
-                    <h3>Criterion details</h3>
-                    <div id="criterionEmpty" class="muted" style="margin-top:8px;">Click a criterion card to edit it.</div>
-                    <div id="criterionEditor" class="hidden">
-                        <div class="muted">Field</div>
-                        <div id="critField" class="mono" style="margin:6px 0 10px 0;"></div>
-                        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:8px;">
-                            <button id="btnDeactivateCurrent" class="btn">Deactivate for current mask</button>
-                            <button id="btnDeleteCriterion" class="btn">Delete criterion</button>
+                    <div class="field has-addons">
+                        <div class="control">
+                            <input id="newMaskNameRulesUI" class="input is-small" type="text" placeholder="left / middle / right">
                         </div>
-
-                        <details class="rulesui-details" open>
-                            <summary>Basics</summary>
-                            <label class="muted" style="margin-top:8px;">Question
-                                <textarea id="critQuestion" class="code-textarea" style="min-height:80px;"></textarea>
-                            </label>
-                            <div class="form-grid" style="margin-top:10px;">
-                                <label class="muted">Intent
-                                    <select id="critIntent">
-                                        <option value="change">change</option>
-                                        <option value="preserve">preserve</option>
-                                    </select>
-                                </label>
-                                <label class="muted">Edit strength
-                                    <select id="critStrength">
-                                        <option value="low">low</option>
-                                        <option value="medium">medium</option>
-                                        <option value="high">high</option>
-                                    </select>
-                                </label>
-                            </div>
-                        </details>
-
-                        <details class="rulesui-details" style="margin-top:10px;">
-                            <summary>Mask membership</summary>
-                            <div class="muted" style="margin-top:6px;">Which masks should evaluate/use this criterion.</div>
-                            <div id="critScopes" class="scope-chips" style="margin-top:8px;"></div>
-                        </details>
-
-                        <details class="rulesui-details" open style="margin-top:10px;">
-                            <summary>Prompt guidance (advanced)</summary>
-                            <label class="muted" style="margin-top:8px;">must_include (one per line)
-                                <textarea id="critMust" class="code-textarea" style="min-height:90px;"></textarea>
-                            </label>
-                            <label class="muted" style="margin-top:10px;">ban_terms (one per line)
-                                <textarea id="critBan" class="code-textarea" style="min-height:90px;"></textarea>
-                            </label>
-                            <label class="muted" style="margin-top:10px;">avoid_terms (one per line)
-                                <textarea id="critAvoid" class="code-textarea" style="min-height:90px;"></textarea>
-                            </label>
-                        </details>
+                        <div class="control">
+                            <button id="btnCreateMaskRulesUI" class="button is-small is-light">Create</button>
+                        </div>
                     </div>
+                </div>
+                <div class="column is-3">
+                    <h3 class="title is-6">Scope preview</h3>
+                    <figure class="image">
+                        <img id="scopeBaseImg" class="scope-preview-img" src="/api/project/{{ project_name }}/input/image" alt="Input">
+                        <img id="scopeMaskImg" class="scope-preview-img" src="" alt="Mask overlay" style="display:none; position:absolute; top:0; left:0; opacity:0.5;">
+                    </figure>
+                </div>
+                <div class="column is-6">
+                    <h3 class="title is-6">Project settings</h3>
+                    <div class="field is-horizontal">
+                        <div class="field-body">
+                            <div class="field">
+                                <label class="label is-size-7">Max iterations</label>
+                                <div class="control">
+                                    <input id="projMaxIterations" class="input is-small" type="number" min="1" max="50" value="20">
+                                </div>
+                            </div>
+                            <div class="field">
+                                <label class="label is-size-7">Preserve heavy</label>
+                                <div class="control">
+                                    <div class="select is-small is-fullwidth">
+                                        <select id="projPreserveHeavy">
+                                            <option value="auto">auto</option>
+                                            <option value="true">true</option>
+                                            <option value="false">false</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="field">
+                                <label class="label is-size-7">Lock seed</label>
+                                <div class="control">
+                                    <div class="select is-small is-fullwidth">
+                                        <select id="projLockSeed">
+                                            <option value="true">true</option>
+                                            <option value="false">false</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
 
-                    <details class="rulesui-details" style="margin-top:12px;">
-                        <summary>YAML preview</summary>
-                        <div class="muted" style="margin-top:6px;">Use the YAML button above for the full preview + copy.</div>
-                        <textarea id="yamlPreview" class="code-textarea" readonly style="min-height:140px;"></textarea>
-                    </details>
-                </aside>
-            </section>
-        </main>
+        <!-- Tabs -->
+        <div class="rulesui-tabs">
+            <a class="rulesui-tab is-active" data-tab="rules">
+                <span class="icon"><i class="fas fa-list-check"></i></span>
+                <span>Rules & Criteria</span>
+            </a>
+            <a class="rulesui-tab" data-tab="prompts">
+                <span class="icon"><i class="fas fa-comment-dots"></i></span>
+                <span>Prompts</span>
+            </a>
+            <a class="rulesui-tab" data-tab="generation">
+                <span class="icon"><i class="fas fa-cog"></i></span>
+                <span>Generation</span>
+            </a>
+            <a class="rulesui-tab" data-tab="vision">
+                <span class="icon"><i class="fas fa-eye"></i></span>
+                <span>Vision</span>
+            </a>
+            <a class="rulesui-tab" data-tab="advanced">
+                <span class="icon"><i class="fas fa-code"></i></span>
+                <span>Advanced</span>
+            </a>
+        </div>
+
+        <!-- Tab: Rules & Criteria -->
+        <div class="rulesui-tab-content is-active" data-content="rules">
+            <div class="columns">
+                <div class="column is-8">
+                    <div class="box">
+                        <div class="level mb-4">
+                            <div class="level-left">
+                                <div class="level-item">
+                                    <button id="btnAddCriterion" class="button is-light is-small">
+                                        <span class="icon"><i class="fas fa-plus"></i></span>
+                                        <span>Add criterion</span>
+                                    </button>
+                                </div>
+                                <div class="level-item">
+                                    <button id="btnAddQuestion" class="button is-light is-small">
+                                        <span class="icon"><i class="fas fa-question"></i></span>
+                                        <span>Add question</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="columns">
+                            <div class="column">
+                                <h4 class="title is-6">Change goals</h4>
+                                <div id="colChange" class="board-col"></div>
+                            </div>
+                            <div class="column">
+                                <h4 class="title is-6">Preserve goals</h4>
+                                <div id="colPreserve" class="board-col"></div>
+                            </div>
+                        </div>
+                        <div class="mt-4">
+                            <h4 class="title is-6">Questions</h4>
+                            <div id="questionsList"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="column is-4">
+                    <div class="box">
+                        <h3 class="title is-6">Criterion details</h3>
+                        <div id="criterionEmpty" class="has-text-grey">Click a criterion card to edit it.</div>
+                        <div id="criterionEditor" class="is-hidden">
+                            <div class="field">
+                                <label class="label is-size-7">Field</label>
+                                <div id="critField" class="is-family-monospace has-text-weight-bold"></div>
+                            </div>
+                            <div class="buttons mb-3">
+                                <button id="btnDeactivateCurrent" class="button is-small is-light">Deactivate</button>
+                                <button id="btnDeleteCriterion" class="button is-small is-danger is-light">Delete</button>
+                            </div>
+                            <div class="field">
+                                <label class="label is-size-7">Question</label>
+                                <div class="control">
+                                    <textarea id="critQuestion" class="textarea is-small"></textarea>
+                                </div>
+                            </div>
+                            <div class="field is-horizontal">
+                                <div class="field-body">
+                                    <div class="field">
+                                        <label class="label is-size-7">Intent</label>
+                                        <div class="control">
+                                            <div class="select is-small is-fullwidth">
+                                                <select id="critIntent">
+                                                    <option value="change">change</option>
+                                                    <option value="preserve">preserve</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="field">
+                                        <label class="label is-size-7">Strength</label>
+                                        <div class="control">
+                                            <div class="select is-small is-fullwidth">
+                                                <select id="critStrength">
+                                                    <option value="low">low</option>
+                                                    <option value="medium">medium</option>
+                                                    <option value="high">high</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="field">
+                                <label class="label is-size-7">Mask membership</label>
+                                <div id="critScopes" class="tags"></div>
+                            </div>
+                            <div class="field">
+                                <label class="label is-size-7">must_include (one per line)</label>
+                                <div class="control">
+                                    <textarea id="critMust" class="textarea is-small code-textarea"></textarea>
+                                </div>
+                            </div>
+                            <div class="field">
+                                <label class="label is-size-7">ban_terms (one per line)</label>
+                                <div class="control">
+                                    <textarea id="critBan" class="textarea is-small code-textarea"></textarea>
+                                </div>
+                            </div>
+                            <div class="field">
+                                <label class="label is-size-7">avoid_terms (one per line)</label>
+                                <div class="control">
+                                    <textarea id="critAvoid" class="textarea is-small code-textarea"></textarea>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab: Prompts -->
+        <div class="rulesui-tab-content" data-content="prompts">
+            <div class="columns">
+                <div class="column is-6">
+                    <div class="box">
+                        <h3 class="title is-6">Base prompts (this scope)</h3>
+                        <p class="is-size-7 has-text-grey mb-3">Stored in <code>config/rules.yaml</code> under <code>prompts</code>.</p>
+                        <div class="field">
+                            <label class="label is-size-7">Positive</label>
+                            <div class="control">
+                                <textarea id="scopePromptPositive" class="textarea code-textarea" readonly></textarea>
+                            </div>
+                        </div>
+                        <div class="field">
+                            <label class="label is-size-7">Negative</label>
+                            <div class="control">
+                                <textarea id="scopePromptNegative" class="textarea code-textarea" readonly></textarea>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="column is-6">
+                    <div class="box">
+                        <h3 class="title is-6">Working prompts</h3>
+                        <p class="is-size-7 has-text-grey mb-3">These edit <code>working/AIGen.yaml</code> prompts (what ComfyUI uses during a run).</p>
+                        <div class="buttons mb-3">
+                            <button id="btnLoadWorkingPrompts" class="button is-small is-light">Load</button>
+                            <button id="btnSaveWorkingPrompts" class="button is-small is-primary" disabled>Save</button>
+                            <span id="workingPromptsStatus" class="has-text-grey is-size-7"></span>
+                        </div>
+                        <div class="field">
+                            <label class="label is-size-7">Positive</label>
+                            <div class="control">
+                                <textarea id="workingPromptPositive" class="textarea code-textarea"></textarea>
+                            </div>
+                        </div>
+                        <div class="field">
+                            <label class="label is-size-7">Negative</label>
+                            <div class="control">
+                                <textarea id="workingPromptNegative" class="textarea code-textarea"></textarea>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab: Generation -->
+        <div class="rulesui-tab-content" data-content="generation">
+            <div class="box">
+                <h3 class="title is-6">AIGen.yaml (engine config)</h3>
+                <p class="is-size-7 has-text-grey mb-3">This edits <code>config/AIGen.yaml</code> (defaults for new runs).</p>
+                <div class="buttons mb-3">
+                    <button id="btnLoadAigenCfg" class="button is-small is-light">Load</button>
+                    <button id="btnSaveAigenCfg" class="button is-small is-primary" disabled>Save</button>
+                    <span id="aigenCfgStatus" class="has-text-grey is-size-7"></span>
+                </div>
+                <div class="field">
+                    <div class="control">
+                        <textarea id="aigenCfgBox" class="textarea code-textarea" placeholder="Click 'Load' to edit..." style="min-height:400px;"></textarea>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab: Vision -->
+        <div class="rulesui-tab-content" data-content="vision">
+            <div class="box">
+                <h3 class="title is-6">AIVis.yaml (vision config)</h3>
+                <p class="is-size-7 has-text-grey mb-3">This edits <code>config/AIVis.yaml</code>. Prefer using environment variables for API keys.</p>
+                <div class="buttons mb-3">
+                    <button id="btnLoadAiVisCfg" class="button is-small is-light">Load</button>
+                    <button id="btnSaveAiVisCfg" class="button is-small is-primary" disabled>Save</button>
+                    <span id="aivisCfgStatus" class="has-text-grey is-size-7"></span>
+                </div>
+                <div class="field">
+                    <div class="control">
+                        <textarea id="aivisCfgBox" class="textarea code-textarea" placeholder="Click 'Load' to edit..." style="min-height:300px;"></textarea>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab: Advanced -->
+        <div class="rulesui-tab-content" data-content="advanced">
+            <div class="box">
+                <h3 class="title is-6">YAML preview</h3>
+                <p class="is-size-7 has-text-grey mb-3">Use the YAML button above for the full preview + copy.</p>
+                <div class="field">
+                    <div class="control">
+                        <textarea id="yamlPreview" class="textarea code-textarea" readonly style="min-height:400px;"></textarea>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
-    <div id="yamlModal" class="modal hidden" aria-hidden="true">
-        <div class="modal-backdrop" id="yamlBackdrop"></div>
-        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="yamlTitle">
-            <div class="modal-header">
-                <div>
-                    <h3 id="yamlTitle" style="margin:0;">rules.yaml (preview)</h3>
-                    <div class="muted">Read-only. Use Save to write to disk.</div>
-                </div>
-                <div style="display:flex; gap:10px;">
-                    <button id="btnCopyYaml" class="btn">Copy</button>
-                    <button id="btnCloseYaml" class="btn primary">Close</button>
-                </div>
-            </div>
-            <textarea id="yamlModalText" class="code-textarea" readonly style="min-height:520px;"></textarea>
+    <!-- YAML Modal -->
+    <div id="yamlModal" class="modal">
+        <div class="modal-background" id="yamlBackdrop"></div>
+        <div class="modal-card">
+            <header class="modal-card-head">
+                <p class="modal-card-title">rules.yaml (preview)</p>
+                <button class="delete" id="btnCloseYaml" aria-label="close"></button>
+            </header>
+            <section class="modal-card-body">
+                <textarea id="yamlModalText" class="textarea code-textarea" readonly style="min-height:500px;"></textarea>
+            </section>
+            <footer class="modal-card-foot">
+                <button id="btnCopyYaml" class="button is-primary">Copy</button>
+                <button id="btnCloseYaml2" class="button">Close</button>
+            </footer>
         </div>
     </div>
 
     <script>
         window.__RULESUI_PROJECT__ = "{{ project_name }}";
+        
+        // Tab switching
+        document.querySelectorAll('.rulesui-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                const targetTab = tab.dataset.tab;
+                document.querySelectorAll('.rulesui-tab').forEach(t => t.classList.remove('is-active'));
+                document.querySelectorAll('.rulesui-tab-content').forEach(c => c.classList.remove('is-active'));
+                tab.classList.add('is-active');
+                document.querySelector(`[data-content="${targetTab}"]`).classList.add('is-active');
+            });
+        });
     </script>
     <script src="{{ url_for('static', filename='js/rules_ui.js') }}"></script>
 </body>
 </html>
-

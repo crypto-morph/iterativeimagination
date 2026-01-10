@@ -18,16 +18,14 @@ function setTextStatus(id, text) {
 
 function openYamlModal() {
   const m = $("yamlModal");
-  m.classList.remove("hidden");
-  m.setAttribute("aria-hidden", "false");
+  m.classList.add("is-active");
   // Copy current preview into modal
   $("yamlModalText").value = $("yamlPreview").value || "";
 }
 
 function closeYamlModal() {
   const m = $("yamlModal");
-  m.classList.add("hidden");
-  m.setAttribute("aria-hidden", "true");
+  m.classList.remove("is-active");
 }
 
 async function copyYaml() {
@@ -49,21 +47,22 @@ function showLint(errors, warnings) {
   const errs = errors || [];
   const warns = warnings || [];
   if ((!errs.length) && (!warns.length)) {
-    box.classList.add("hidden");
+    box.classList.add("is-hidden");
     box.innerHTML = "";
     return;
   }
-  box.classList.remove("hidden");
+  box.classList.remove("is-hidden");
   const parts = [];
   if (errs.length) {
-    parts.push(`<div><strong>Errors</strong><ul>${errs.map(x => `<li>${escapeHtml(String(x))}</li>`).join("")}</ul></div>`);
-  }
-  if (warns.length) {
-    parts.push(`<div><strong>Warnings</strong><ul>${warns.map(x => `<li>${escapeHtml(String(x))}</li>`).join("")}</ul></div>`);
+    box.classList.remove("is-warning");
+    box.classList.add("is-danger");
+    parts.push(`<strong>Errors</strong><ul>${errs.map(x => `<li>${escapeHtml(String(x))}</li>`).join("")}</ul>`);
+  } else if (warns.length) {
+    box.classList.remove("is-danger");
+    box.classList.add("is-warning");
+    parts.push(`<strong>Warnings</strong><ul>${warns.map(x => `<li>${escapeHtml(String(x))}</li>`).join("")}</ul>`);
   }
   box.innerHTML = parts.join("");
-  box.classList.toggle("error", !!errs.length);
-  box.classList.toggle("warn", !errs.length && !!warns.length);
 }
 
 function escapeHtml(s) {
@@ -213,14 +212,17 @@ function renderScopes() {
   const scopes = [...maskNames(), "all"];
   for (const s of scopes) {
     const btn = document.createElement("button");
-    btn.className = "btn";
+    btn.className = "button is-small";
     btn.textContent = (s === "all") ? "Show all" : `Mask: ${s}`;
     btn.addEventListener("click", () => {
       state.scope = s;
       state.selectedField = null;
       renderAll();
     });
-    if (state.scope === s) btn.classList.add("active");
+    if (state.scope === s) {
+      btn.classList.add("is-active");
+      btn.classList.add("is-primary");
+    }
     root.appendChild(btn);
   }
 }
@@ -341,20 +343,20 @@ function renderEditor() {
   const empty = $("criterionEmpty");
   const editor = $("criterionEditor");
   if (!state.selectedField) {
-    empty.classList.remove("hidden");
-    editor.classList.add("hidden");
+    empty.classList.remove("is-hidden");
+    editor.classList.add("is-hidden");
     return;
   }
   const c = findCriterion(state.selectedField);
   if (!c) {
     state.selectedField = null;
-    empty.classList.remove("hidden");
-    editor.classList.add("hidden");
+    empty.classList.remove("is-hidden");
+    editor.classList.add("is-hidden");
     return;
   }
 
-  empty.classList.add("hidden");
-  editor.classList.remove("hidden");
+  empty.classList.add("is-hidden");
+  editor.classList.remove("is-hidden");
 
   $("critField").textContent = String(c.field || "");
   $("critQuestion").value = String(c.question || "");
@@ -690,8 +692,9 @@ function wire() {
   $("btnAddQuestion").addEventListener("click", createQuestion);
   $("btnShowYaml").addEventListener("click", openYamlModal);
   $("btnGenPrompts").addEventListener("click", generateBasePrompts);
-  $("btnCloseYaml").addEventListener("click", closeYamlModal);
-  $("yamlBackdrop").addEventListener("click", closeYamlModal);
+  $("btnCloseYaml")?.addEventListener("click", closeYamlModal);
+  $("btnCloseYaml2")?.addEventListener("click", closeYamlModal);
+  $("yamlBackdrop")?.addEventListener("click", closeYamlModal);
   $("btnCopyYaml").addEventListener("click", copyYaml);
 
   // Advanced: working prompts
