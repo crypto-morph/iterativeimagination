@@ -1168,32 +1168,6 @@ class IterativeImagination:
         """
         self.logger.info(f"{'='*60}\nIterative Imagination\n{'='*60}")
         self.logger.info(f"Project: {self.project_name}")
-
-    def _mask_is_all_white(self, mask_path: Path) -> bool:
-        """Return True if the mask is effectively 'all white' (editable everywhere).
-
-        Uses Pillow if available; if Pillow is missing or the image cannot be read, returns False.
-        """
-        try:
-            with suppress(Exception):
-                from PIL import Image  # type: ignore
-                img = Image.open(mask_path)
-                # Handle alpha explicitly so transparent pixels don't masquerade as white.
-                if img.mode in ("RGBA", "LA"):
-                    rgb = img.convert("RGB")
-                    alpha = img.split()[-1]
-                    # Consider "all white" only if alpha is fully opaque and RGB is all-white-ish.
-                    a_min, a_max = alpha.getextrema()
-                    if a_min < 254:
-                        return False
-                    g = rgb.convert("L")
-                else:
-                    g = img.convert("L")
-                mn, mx = g.getextrema()
-                return mn >= 254 and mx >= 254
-        except Exception:
-            return False
-        return False
         self.logger.info(f"Input image: {self.input_image_path}")
         self.logger.info(f"Max iterations: {self.rules['project']['max_iterations']}\n{'='*60}")
         
