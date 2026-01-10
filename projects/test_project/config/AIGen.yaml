@@ -21,4 +21,5 @@ prompts:
 
 # Toggle masking without deleting the file. When false, input/mask.png is ignored.
 masking:
-  enabled: false
+  enabled: true
+  # active_mask: left  # Uncomment and set to left/middle/right to use a specific mask
