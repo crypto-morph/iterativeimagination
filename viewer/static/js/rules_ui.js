@@ -86,6 +86,13 @@ function updateScopePreview() {
     maskImg.style.display = "none";
     return;
   }
+  // If the mask file doesn't exist yet, keep the preview clean (no 404 noise).
+  const exists = (state.masks || []).some(m => (m && m.name) === state.scope);
+  if (!exists && state.scope !== "default") {
+    maskImg.src = "";
+    maskImg.style.display = "none";
+    return;
+  }
   maskImg.style.display = "block";
   maskImg.src = `/api/project/${project}/input/mask/${encodeURIComponent(state.scope)}`;
 }

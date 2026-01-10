@@ -17,6 +17,11 @@ import re
 app = Flask(__name__)
 PROJECTS_ROOT = Path(__file__).parent.parent / "projects"
 
+# 1x1 transparent PNG (avoids noisy 404s for missing mask previews in the browser UI)
+_TRANSPARENT_PNG_1X1 = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMB/az1eO8AAAAASUVORK5CYII="
+)
+
 # Live run registry (in-memory)
 _LIVE_RUNS_LOCK = threading.Lock()
 _LIVE_RUNS = {}  # (project_name, run_id) -> LiveRunController
@@ -199,7 +204,7 @@ def get_input_mask(project_name: str):
     input_dir = PROJECTS_ROOT / project_name / "input"
     if (input_dir / "mask.png").exists():
         return send_from_directory(str(input_dir), "mask.png")
-    return jsonify({'error': 'Mask not found'}), 404
+    return Response(_TRANSPARENT_PNG_1X1, mimetype="image/png")
 
 
 @app.route('/api/project/<project_name>/input/mask', methods=['POST'])
@@ -271,13 +276,13 @@ def get_named_mask(project_name: str, mask_name: str):
         p = input_dir / "mask.png"
         if p.exists():
             return send_from_directory(str(input_dir), "mask.png")
-        return jsonify({"error": "Mask not found"}), 404
+        return Response(_TRANSPARENT_PNG_1X1, mimetype="image/png")
 
     masks_dir = input_dir / "masks"
     p = masks_dir / f"{mname}.png"
     if p.exists():
         return send_from_directory(str(masks_dir), p.name)
-    return jsonify({"error": "Mask not found"}), 404
+    return Response(_TRANSPARENT_PNG_1X1, mimetype="image/png")
 
 
 @app.route('/api/project/<project_name>/input/mask/<mask_name>', methods=['POST'])
