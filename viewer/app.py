@@ -1192,6 +1192,10 @@ def generate_rules_base_prompts(project_name: str):
     if not isinstance(mm, list):
         mm = []
     active_fields: list[str] = []
+    known_masks: set[str] = set()
+    for m in mm:
+        if isinstance(m, dict) and m.get("name"):
+            known_masks.add(str(m.get("name")))
     if scope == "global":
         # Global base prompts are for "no-mask / whole image" projects.
         # Use all criteria fields (in order), since there is no single mask scope to consult.
@@ -1207,7 +1211,9 @@ def generate_rules_base_prompts(project_name: str):
                 if isinstance(ac, list):
                     active_fields = [str(x) for x in ac if str(x).strip()]
                 break
-        if not active_fields and scope != "default":
+        # A mask can legitimately have zero active criteria; that is still a valid scope.
+        # Validate scope by membership presence (or allow legacy default).
+        if scope != "default" and scope not in known_masks:
             return jsonify({"error": f"Unknown mask scope: {scope}"}), 400
 
     crits = rules_obj.get("acceptance_criteria") or []
