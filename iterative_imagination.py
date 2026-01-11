@@ -1257,6 +1257,102 @@ class IterativeImagination:
             params["denoise"] = max(denoise_min, float(params.get("denoise", cur_d)) - 0.05)
             self.logger.info(f"Images too different (similarity={similarity:.2f}) - reducing denoise to {params['denoise']:.2f}")
         
+        # Get AI-driven parameter recommendations (optional, can be enabled per-project)
+        aivis_param_recommendations_enabled = proj_cfg.get("aivis_parameter_recommendations", False)
+        if aivis_param_recommendations_enabled:
+            try:
+                self.logger.info("Getting AI parameter recommendations from AIVis...")
+                image_path = iteration_result.get('image_path')
+                if image_path:
+                    # Resolve to absolute path if needed
+                    if not Path(image_path).is_absolute():
+                        image_path = self.project.project_root / image_path
+                    else:
+                        image_path = Path(image_path)
+                    
+                    # Get original description
+                    try:
+                        original_desc = self._describe_original_image()
+                    except Exception:
+                        original_desc = None
+                    
+                    # Get recommendations
+                    recommendations = self.aivis.recommend_parameters(
+                        image_path=str(image_path),
+                        original_description=original_desc,
+                        current_denoise=cur_d,
+                        current_cfg=cur_cfg,
+                        evaluation=evaluation,
+                        comparison=comparison,
+                        failed_criteria=failed_criteria,
+                    )
+                    
+                    # Apply recommendations with confidence weighting
+                    # We blend AI recommendations with algorithmic adjustments
+                    denoise_rec = recommendations.get("denoise_recommendation", "keep")
+                    denoise_conf = float(recommendations.get("denoise_confidence", 0.0))
+                    denoise_reason = recommendations.get("denoise_reasoning", "")
+                    
+                    cfg_rec = recommendations.get("cfg_recommendation", "keep")
+                    cfg_conf = float(recommendations.get("cfg_confidence", 0.0))
+                    cfg_reason = recommendations.get("cfg_reasoning", "")
+                    
+                    quality_assessment = recommendations.get("overall_quality_assessment", "")
+                    
+                    self.logger.info(f"AIVis parameter recommendations:")
+                    self.logger.info(f"  Denoise: {denoise_rec} (confidence: {denoise_conf:.2f}) - {denoise_reason}")
+                    self.logger.info(f"  CFG: {cfg_rec} (confidence: {cfg_conf:.2f}) - {cfg_reason}")
+                    if quality_assessment:
+                        self.logger.info(f"  Quality assessment: {quality_assessment}")
+                    
+                    # Apply recommendations with confidence weighting
+                    # Only apply if confidence is above threshold (0.5) and it doesn't conflict with caps
+                    confidence_threshold = 0.5
+                    
+                    if denoise_conf >= confidence_threshold:
+                        if denoise_rec == "increase":
+                            # Weight the recommendation by confidence (0.5-1.0 maps to 0.5-1.0x of base increment)
+                            rec_weight = 0.5 + (denoise_conf * 0.5)  # 0.5 to 1.0
+                            rec_delta = 0.04 * rec_weight  # Base increment of 0.04, scaled by confidence
+                            new_denoise = min(denoise_max, params.get("denoise", cur_d) + rec_delta)
+                            if new_denoise > params.get("denoise", cur_d):
+                                params["denoise"] = new_denoise
+                                self.logger.info(f"  Applied AIVis denoise increase: {params['denoise']:.3f} (+{rec_delta:.3f})")
+                        elif denoise_rec == "decrease":
+                            rec_weight = 0.5 + (denoise_conf * 0.5)
+                            rec_delta = 0.04 * rec_weight
+                            new_denoise = max(denoise_min, params.get("denoise", cur_d) - rec_delta)
+                            if new_denoise < params.get("denoise", cur_d):
+                                params["denoise"] = new_denoise
+                                self.logger.info(f"  Applied AIVis denoise decrease: {params['denoise']:.3f} (-{rec_delta:.3f})")
+                    
+                    if cfg_conf >= confidence_threshold:
+                        if cfg_rec == "increase":
+                            rec_weight = 0.5 + (cfg_conf * 0.5)
+                            rec_delta = 0.5 * rec_weight  # Base increment of 0.5, scaled by confidence
+                            new_cfg = min(cfg_max, params.get("cfg", cur_cfg) + rec_delta)
+                            if new_cfg > params.get("cfg", cur_cfg):
+                                params["cfg"] = new_cfg
+                                self.logger.info(f"  Applied AIVis cfg increase: {params['cfg']:.1f} (+{rec_delta:.1f})")
+                        elif cfg_rec == "decrease":
+                            rec_weight = 0.5 + (cfg_conf * 0.5)
+                            rec_delta = 0.5 * rec_weight
+                            new_cfg = max(cfg_min, params.get("cfg", cur_cfg) - rec_delta)
+                            if new_cfg < params.get("cfg", cur_cfg):
+                                params["cfg"] = new_cfg
+                                self.logger.info(f"  Applied AIVis cfg decrease: {params['cfg']:.1f} (-{rec_delta:.1f})")
+                    
+                    # Store recommendations in metadata for debugging
+                    if not hasattr(self, '_last_param_recommendations'):
+                        self._last_param_recommendations = []
+                    self._last_param_recommendations.append({
+                        "iteration": iteration_result.get('iteration'),
+                        "recommendations": recommendations
+                    })
+            except Exception as e:
+                self.logger.warning(f"Failed to get AIVis parameter recommendations: {e}")
+                # Continue with algorithmic adjustments only
+        
         # Check if prompt improvement is enabled (default: false for testing)
         improve_prompts_enabled = proj_cfg.get("improve_prompts", False)
         

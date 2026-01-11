@@ -733,6 +733,105 @@ class AIVisClient:
                 "error": str(e)
             }
             return f"Failed to describe image: {str(e)}"
+    
+    def recommend_parameters(
+        self,
+        image_path: str,
+        original_description: str,
+        current_denoise: float,
+        current_cfg: float,
+        evaluation: Dict,
+        comparison: Dict,
+        failed_criteria: List[str],
+    ) -> Dict:
+        """Get AI recommendations for denoise and cfg parameter adjustments.
+        
+        Returns a dict with keys:
+        - denoise_recommendation: "increase" | "decrease" | "keep"
+        - denoise_confidence: float 0.0-1.0
+        - denoise_reasoning: str
+        - cfg_recommendation: "increase" | "decrease" | "keep"
+        - cfg_confidence: float 0.0-1.0
+        - cfg_reasoning: str
+        - overall_quality_assessment: str
+        - _metadata: dict with request metadata
+        """
+        if "recommend_parameters" not in self.prompts:
+            # Fallback if prompt template not available
+            return {
+                "denoise_recommendation": "keep",
+                "denoise_confidence": 0.0,
+                "denoise_reasoning": "Parameter recommendation prompt not available",
+                "cfg_recommendation": "keep",
+                "cfg_confidence": 0.0,
+                "cfg_reasoning": "Parameter recommendation prompt not available",
+                "overall_quality_assessment": "Unable to assess",
+                "_metadata": {
+                    "provider": self.provider,
+                    "model": self.model,
+                    "using_fallback": self._using_fallback,
+                    "success": False,
+                    "error": "Missing prompt template: recommend_parameters"
+                }
+            }
+        
+        image_b64 = self._image_to_base64(image_path)
+        original_description = original_description or "Original image description unavailable."
+        
+        # Format evaluation summary
+        criteria_results = evaluation.get('criteria_results', {}) or {}
+        eval_summary = f"Overall score: {evaluation.get('overall_score', 0)}%\n"
+        eval_summary += "Criteria results:\n"
+        for field, result in criteria_results.items():
+            eval_summary += f"  - {field}: {result}\n"
+        
+        # Format comparison summary
+        comp_summary = f"Similarity: {comparison.get('similarity_score', 0.5):.2f}\n"
+        comp_summary += f"Differences: {', '.join(comparison.get('differences', []))}\n"
+        comp_summary += f"Analysis: {comparison.get('analysis', 'N/A')}"
+        
+        # Format failed criteria
+        failed_str = ", ".join(failed_criteria) if failed_criteria else "None"
+        
+        prompt = self.prompts['recommend_parameters'].format(
+            current_denoise=current_denoise,
+            current_cfg=current_cfg,
+            original_description=original_description,
+            evaluation_summary=eval_summary,
+            failed_criteria=failed_str,
+            comparison_summary=comp_summary
+        )
+        
+        payload = {
+            "model": self.model,
+            "prompt": prompt,
+            "images": [image_b64],
+            "stream": False,
+            "format": "json"
+        }
+        
+        try:
+            result, metadata = self._make_request_with_retry(payload, parse_json=True)
+            result["_metadata"] = metadata
+            return result
+        except Exception as e:
+            # Fallback recommendation
+            return {
+                "denoise_recommendation": "keep",
+                "denoise_confidence": 0.0,
+                "denoise_reasoning": f"Recommendation failed: {str(e)}",
+                "cfg_recommendation": "keep",
+                "cfg_confidence": 0.0,
+                "cfg_reasoning": f"Recommendation failed: {str(e)}",
+                "overall_quality_assessment": f"Unable to assess: {str(e)}",
+                "_metadata": {
+                    "provider": self.provider,
+                    "model": self.model,
+                    "using_fallback": self._using_fallback,
+                    "success": False,
+                    "error": str(e)
+                }
+            }
 
     def generate_base_prompts(self, original_description: str, scope: str, active_criteria_text: str) -> Tuple[Dict, Dict]:
         """Generate a clean starting positive/negative prompt from description + active criteria tags.

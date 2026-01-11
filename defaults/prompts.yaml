@@ -195,3 +195,39 @@ suggest_rules_tags: |
     ],
     "general_notes": ["..."]
   }}
+
+recommend_parameters: |
+  Analyze this GENERATED image and recommend adjustments to the denoise and cfg (Classifier-Free Guidance) parameters for the next iteration.
+  
+  CONTEXT:
+  - Current denoise: {current_denoise} (0.0 = no change, 1.0 = complete regeneration)
+  - Current cfg: {current_cfg} (lower = more creative/flexible, higher = more prompt-adherent)
+  - Original image description: {original_description}
+  - Evaluation results: {evaluation_summary}
+  - Failed criteria: {failed_criteria}
+  - Image comparison: {comparison_summary}
+  
+  ANALYSIS TASKS:
+  1. Look for visual artifacts (distortions, blur, over-saturation, deformities)
+  2. Assess whether desired changes are being applied (or if the image is too similar to original)
+  3. Check if the image quality is degrading (too much change) or if changes aren't happening (too little change)
+  4. Consider whether the issue is likely due to:
+     - Too low denoise/cfg: changes not being applied, image too similar to original
+     - Too high denoise/cfg: artifacts, deformities, over-processing, loss of detail
+  
+  RECOMMENDATIONS:
+  - For denoise: recommend "increase", "decrease", or "keep" based on whether changes need more/less strength
+  - For cfg: recommend "increase", "decrease", or "keep" based on whether prompt adherence needs to be stronger/weaker
+  - Provide confidence level (0.0-1.0) for each recommendation
+  - Provide brief reasoning for each recommendation
+  
+  Provide your recommendations in JSON format:
+  {{
+    "denoise_recommendation": "increase|decrease|keep",
+    "denoise_confidence": <0.0-1.0>,
+    "denoise_reasoning": "brief explanation",
+    "cfg_recommendation": "increase|decrease|keep",
+    "cfg_confidence": <0.0-1.0>,
+    "cfg_reasoning": "brief explanation",
+    "overall_quality_assessment": "description of image quality and any artifacts"
+  }}
