@@ -18,11 +18,13 @@ ask_question: |
   For array questions, provide a JSON array.
 
 ask_multiple_questions: |
-  Answer ALL of the following questions about the image. Answer each question carefully based on the image content.
+  Answer ALL of the following questions about the GENERATED image. Answer each question carefully based on the image content.
   
   {questions_list}
   
   {original_image_context}
+  
+  IMPORTANT: When questions ask you to compare to the ORIGINAL image, use the original image description provided above to make your comparison. Focus on whether the generated image maintains the same believability, poses, and scene consistency as the original.
   
   Provide your answers in JSON format with one field per question:
   {{

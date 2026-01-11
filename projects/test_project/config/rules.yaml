@@ -91,6 +91,7 @@ masking:
     - person_pose
     - background_identical
     - person_body_proportions
+    - scene_believability
   - name: middle
     active_criteria:
     - middle_outfit
@@ -98,6 +99,7 @@ masking:
     - person_pose
     - person_body_proportions
     - background_identical
+    - scene_believability
   - name: right
     active_criteria:
     - right_outfit
@@ -188,6 +190,14 @@ questions:
   min: 0
   question: Rate the similarity of body proportions (0.0 = completely different, 1.0
     = identical)
+  type: number
+- field: scene_believability_assessment
+  question: Assess the believability of the scene compared to the original. Are all figures in roughly the same poses and positions? Are there any unrealistic changes, deformities, impossible body positions, or figures that appear to be floating or in unnatural stances? Describe any believability issues.
+  type: string
+- field: scene_believability_score
+  max: 1
+  min: 0
+  question: Rate the believability of the scene compared to the original (0.0 = completely unrealistic/unbelievable, 1.0 = fully believable and natural, same as original)
   type: number
 - field: overall_image_difference
   max: 1
