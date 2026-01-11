@@ -353,6 +353,7 @@ def suggest_mask(project_name: str):
     threshold = payload.get("threshold", 0.30)
     focus = payload.get("focus")  # auto|left|middle|right|none
     anchor = payload.get("anchor")
+    feather = payload.get("feather", 0)  # pixels to feather (0 = no feathering)
 
     if not isinstance(query, str) or not query.strip():
         return jsonify({"error": "Missing query text"}), 400
@@ -380,6 +381,7 @@ def suggest_mask(project_name: str):
             "threshold": threshold_f,
             "focus": str(focus) if focus is not None else "auto",
             "anchor": anchor if isinstance(anchor, dict) else None,
+            "feather": float(feather) if feather is not None else 0.0,
             "status": "queued",
             "message": "queued",
             "created_at": time.time(),
@@ -506,6 +508,11 @@ def suggest_mask(project_name: str):
                     anchor_eff = None
             if isinstance(anchor_eff, dict):
                 raw = _apply_anchor_component_to_mask_png(raw, anchor_eff)
+
+            # Apply feathering if requested (softens mask edges for better blending)
+            feather_px = float(feather) if feather is not None else 0.0
+            if feather_px > 0:
+                raw = _apply_feather_to_mask_png(raw, feather_px)
 
             # Save result into project
             input_dir = project_dir / "input"
@@ -783,6 +790,39 @@ def _apply_focus_to_mask_png(raw_png: bytes, focus: str | None) -> bytes:
 
         buf = io.BytesIO()
         out.save(buf, format="PNG")
+        return buf.getvalue()
+    except Exception:
+        return raw_png
+
+
+def _apply_feather_to_mask_png(raw_png: bytes, feather_pixels: float) -> bytes:
+    """Apply a feathered (soft) border to a mask PNG using Gaussian blur.
+    
+    This helps the AI generation blend better at mask edges by creating a gradual
+    transition from editable (white) to preserved (black) regions.
+    
+    Args:
+        raw_png: Raw PNG bytes of the mask
+        feather_pixels: Radius of feathering in pixels (typically 5-20)
+    
+    Returns:
+        Feathered mask PNG bytes
+    """
+    if not raw_png or feather_pixels <= 0:
+        return raw_png
+    try:
+        from PIL import Image, ImageFilter  # type: ignore
+        import io
+
+        img = Image.open(io.BytesIO(raw_png)).convert("L")
+        
+        # Apply Gaussian blur to create soft edges
+        # The blur radius should be proportional to feather_pixels
+        # PIL's GaussianBlur uses a radius parameter
+        blurred = img.filter(ImageFilter.GaussianBlur(radius=feather_pixels))
+        
+        buf = io.BytesIO()
+        blurred.save(buf, format="PNG")
         return buf.getvalue()
     except Exception:
         return raw_png

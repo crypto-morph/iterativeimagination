@@ -289,13 +289,15 @@ async function suggestMask() {
   }
   const focusEl = $("suggestFocus");
   const focus = focusEl ? String(focusEl.value || "auto") : "auto";
+  const featherEl = $("suggestFeather");
+  const feather = featherEl ? parseFloat(featherEl.value || "0") : 0;
   setStatus(`Suggesting mask '${maskName}' for: ${text} (queueing...)`);
   $("btnSuggestMask").disabled = true;
   try {
     const res = await fetch(`/api/project/${project}/input/mask_suggest`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mask_name: maskName, query: text, threshold: 0.30, focus, anchor })
+      body: JSON.stringify({ mask_name: maskName, query: text, threshold: 0.30, focus, anchor, feather })
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
