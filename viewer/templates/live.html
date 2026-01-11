@@ -17,10 +17,42 @@
             font-size: 0.875rem;
             line-height: 1.5;
         }
+        .diff-added {
+            background-color: #d4edda;
+            color: #155724;
+            padding: 2px 4px;
+            border-radius: 2px;
+        }
+        .diff-removed {
+            background-color: #f8d7da;
+            color: #721c24;
+            padding: 2px 4px;
+            border-radius: 2px;
+            text-decoration: line-through;
+        }
+        .diff-unchanged {
+            color: #333;
+        }
+        .term-tag {
+            margin: 0.25rem;
+        }
+        .term-tag.disabled {
+            opacity: 0.5;
+            text-decoration: line-through;
+        }
+        .image-description {
+            max-height: 150px;
+            overflow-y: auto;
+            font-size: 0.875rem;
+            padding: 0.75rem;
+            background: #f8f9fa;
+            border-radius: 4px;
+        }
     </style>
 </head>
 <body>
-    <div class="container" style="max-width: 1400px;">
+    <div class="container" style="max-width: 1600px;">
+        <!-- Top Navigation Bar -->
         <nav class="navbar is-light" style="margin-bottom: 1.5rem;">
             <div class="navbar-brand">
                 <div class="navbar-item">
@@ -28,7 +60,49 @@
                 </div>
             </div>
             <div class="navbar-menu">
+                <div class="navbar-start">
+                    <div class="navbar-item">
+                        <div class="field is-grouped">
+                            <div class="control">
+                                <button id="resetBtn" class="button is-light">
+                                    <span class="icon"><i class="fas fa-redo"></i></span>
+                                    <span>Reset</span>
+                                </button>
+                            </div>
+                            <div class="control">
+                                <div class="field has-addons">
+                                    <div class="control">
+                                        <span class="button is-static">Max Iterations</span>
+                                    </div>
+                                    <div class="control">
+                                        <input id="maxIterInput" class="input" type="number" min="1" max="50" value="20" style="width:80px;">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="control">
+                                <div class="select">
+                                    <select id="maskSelect">
+                                        <option value="">Loading masks...</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="control">
+                                <button id="runBtn" class="button is-primary">
+                                    <span class="icon"><i class="fas fa-play"></i></span>
+                                    <span>Run</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
                 <div class="navbar-end">
+                    <div class="navbar-item">
+                        <div class="box" style="padding: 0.5rem 1rem; margin: 0;">
+                            <div id="statusBox" class="has-text-grey is-size-7">
+                                <strong>Status:</strong> <span id="statusText">Ready</span>
+                            </div>
+                        </div>
+                    </div>
                     <div class="navbar-item">
                         <div class="buttons">
                             <a class="button is-light" href="/project/{{ project_name }}/mask">
@@ -49,190 +123,189 @@
             </div>
         </nav>
 
-        <div class="box" style="margin-bottom: 1.5rem;">
-            <p class="has-text-grey">One iteration at a time, with human feedback between iterations.</p>
-        </div>
-
-        <div class="box" style="margin-bottom: 1.5rem;">
-            <div class="field is-grouped is-grouped-multiline">
-                <div class="control">
-                    <button id="startBtn" class="button is-primary">Start live run</button>
-                </div>
-                <div class="control">
-                    <label class="checkbox">
-                        <input id="resetChk" type="checkbox">
-                        Reset checkpoint
-                    </label>
-                </div>
-                <div class="control">
-                    <label class="label is-size-7">Max iterations:</label>
-                    <input id="maxIter" class="input" type="number" min="1" max="50" value="20" style="width:80px;">
-                </div>
-                <div class="control">
-                    <label class="label is-size-7">&nbsp;</label>
-                    <span id="statusText" class="has-text-grey"></span>
-                </div>
-            </div>
-        </div>
-
+        <!-- Main Content Area -->
         <div class="columns">
-            <div class="column is-6">
+            <!-- Left Column: Image Comparison -->
+            <div class="column is-8">
+                <div class="box">
+                    <h3 class="title is-5">Image Comparison</h3>
+                    
+                    <!-- Side-by-side images -->
+                    <div class="columns">
+                        <div class="column">
+                            <h4 class="subtitle is-6">Input</h4>
+                            <figure class="image">
+                                <img id="inputImg" src="/api/project/{{ project_name }}/input/image" alt="Input">
+                            </figure>
+                            <div class="box mt-2" style="padding: 0.5rem;">
+                                <div class="is-size-7 has-text-weight-bold mb-1">AIVis Description:</div>
+                                <div id="inputDescription" class="image-description">
+                                    <span class="has-text-grey">Click 'Run' to generate description...</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="column">
+                            <h4 class="subtitle is-6">Latest Iteration</h4>
+                            <div style="position: relative;">
+                                <figure class="image">
+                                    <img id="latestImg" src="" alt="Latest (will appear after iteration 1)">
+                                </figure>
+                                <div id="spinnerOverlay" class="is-hidden" style="position:absolute; inset:0; background:rgba(0,0,0,0.5); display:flex; align-items:center; justify-content:center; flex-direction:column; border-radius:8px;">
+                                    <div class="spinner"></div>
+                                    <div class="has-text-white has-text-weight-bold mt-2">Generating...</div>
+                                </div>
+                            </div>
+                            <div class="box mt-2" style="padding: 0.5rem;">
+                                <div class="is-size-7 has-text-weight-bold mb-1">AIVis Description:</div>
+                                <div id="latestDescription" class="image-description">
+                                    <span class="has-text-grey">No iteration yet...</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Prompts Section -->
+                <div class="box">
+                    <h3 class="title is-5">Prompts</h3>
+                    <div class="tabs is-boxed">
+                        <ul>
+                            <li class="is-active" data-tab="input-prompts"><a>Input Prompts</a></li>
+                            <li data-tab="iteration-prompts"><a>Iteration Prompts</a></li>
+                        </ul>
+                    </div>
+                    
+                    <div id="input-prompts" class="tab-content">
+                        <div class="field">
+                            <label class="label is-size-7">Positive (from rules.yaml)</label>
+                            <div class="control">
+                                <textarea id="inputPositivePrompt" class="textarea code-textarea" readonly style="min-height:100px;"></textarea>
+                            </div>
+                        </div>
+                        <div class="field">
+                            <label class="label is-size-7">Negative (from rules.yaml)</label>
+                            <div class="control">
+                                <textarea id="inputNegativePrompt" class="textarea code-textarea" readonly style="min-height:100px;"></textarea>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div id="iteration-prompts" class="tab-content is-hidden">
+                        <div class="field">
+                            <label class="label is-size-7">Positive (editable)</label>
+                            <div class="control">
+                                <textarea id="iterationPositivePrompt" class="textarea code-textarea" style="min-height:100px;"></textarea>
+                            </div>
+                        </div>
+                        <div class="field">
+                            <label class="label is-size-7">Negative (editable)</label>
+                            <div class="control">
+                                <textarea id="iterationNegativePrompt" class="textarea code-textarea" style="min-height:100px;"></textarea>
+                            </div>
+                        </div>
+                        <div class="field is-grouped">
+                            <div class="control">
+                                <button id="savePromptsBtn" class="button is-primary">Save Prompts</button>
+                            </div>
+                            <div class="control">
+                                <span id="promptsStatus" class="has-text-grey is-size-7"></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- AIVis Prompt Suggestion -->
                 <div class="box">
                     <div class="level">
                         <div class="level-left">
                             <div class="level-item">
-                                <h3 class="title is-6">Rules editor (<code>config/rules.yaml</code>)</h3>
+                                <h3 class="title is-5">AIVis Prompt Suggestion</h3>
                             </div>
                         </div>
                         <div class="level-right">
                             <div class="level-item">
-                                <div class="buttons">
-                                    <button id="loadRulesBtn" class="button is-small is-light">Load</button>
-                                    <button id="saveRulesBtn" class="button is-small is-primary" disabled>Save</button>
-                                </div>
+                                <button id="generateSuggestionBtn" class="button is-light">
+                                    <span class="icon"><i class="fas fa-magic"></i></span>
+                                    <span>Generate</span>
+                                </button>
                             </div>
                         </div>
                     </div>
-                    <div id="rulesStatus" class="has-text-grey is-size-7 mb-2"></div>
-                    <div class="field">
-                        <div class="control">
-                            <textarea id="rulesBox" class="textarea code-textarea" placeholder="Click 'Load' to edit..." style="min-height:200px;"></textarea>
+                    <div id="suggestionBox" class="is-hidden">
+                        <div class="field">
+                            <label class="label is-size-7">Suggested Positive Prompt (changes highlighted)</label>
+                            <div class="control">
+                                <div id="suggestedPositivePrompt" class="textarea code-textarea" style="min-height:100px; white-space: pre-wrap; background: #f8f9fa;" contenteditable="true"></div>
+                            </div>
+                        </div>
+                        <div class="field">
+                            <label class="label is-size-7">Suggested Negative Prompt (changes highlighted)</label>
+                            <div class="control">
+                                <div id="suggestedNegativePrompt" class="textarea code-textarea" style="min-height:100px; white-space: pre-wrap; background: #f8f9fa;" contenteditable="true"></div>
+                            </div>
+                        </div>
+                        <div class="field">
+                            <div class="control">
+                                <button id="applySuggestionBtn" class="button is-success">
+                                    <span class="icon"><i class="fas fa-check"></i></span>
+                                    <span>Apply to Iteration Prompts</span>
+                                </button>
+                            </div>
                         </div>
                     </div>
-                    <div id="rulesLint" class="notification is-hidden"></div>
-                    <p class="is-size-7 has-text-grey mt-2">
-                        Saving creates a backup: <code>rules.yaml.bak.&lt;timestamp&gt;</code>.
-                    </p>
+                    <div id="suggestionPlaceholder" class="has-text-grey is-size-7">
+                        Click 'Generate' to get AI suggestions for improving the prompts based on the current iteration.
+                    </div>
                 </div>
             </div>
-            <div class="column is-6">
+
+            <!-- Right Column: Settings & Terms -->
+            <div class="column is-4">
+                <!-- Settings Summary -->
+                <div class="box">
+                    <h3 class="title is-5">Settings</h3>
+                    <div id="settingsSummary" class="content is-size-7">
+                        <p class="has-text-grey">Loading settings...</p>
+                    </div>
+                </div>
+
+                <!-- Mask-Bound Terms -->
                 <div class="box">
                     <div class="level">
                         <div class="level-left">
                             <div class="level-item">
-                                <h3 class="title is-6">Prompt editor (<code>working/AIGen.yaml</code>)</h3>
+                                <h3 class="title is-5">Mask Terms</h3>
                             </div>
                         </div>
                         <div class="level-right">
                             <div class="level-item">
-                                <div class="buttons">
-                                    <button id="loadPromptsBtn" class="button is-small is-light">Load</button>
-                                    <button id="savePromptsBtn" class="button is-small is-primary" disabled>Save</button>
-                                </div>
+                                <button id="addTermBtn" class="button is-small is-light">
+                                    <span class="icon"><i class="fas fa-plus"></i></span>
+                                    <span>Add</span>
+                                </button>
                             </div>
                         </div>
                     </div>
-                    <div id="promptsStatus" class="has-text-grey is-size-7 mb-2"></div>
-                    <div class="field">
-                        <label class="label is-size-7">Positive prompt</label>
-                        <div class="control">
-                            <textarea id="positivePromptBox" class="textarea code-textarea" placeholder="Positive prompt..."></textarea>
-                        </div>
+                    
+                    <div class="tabs is-small">
+                        <ul>
+                            <li class="is-active" data-term-tab="must_include"><a>Must Include</a></li>
+                            <li data-term-tab="ban_terms"><a>Ban Terms</a></li>
+                            <li data-term-tab="avoid_terms"><a>Avoid Terms</a></li>
+                        </ul>
                     </div>
-                    <div class="field">
-                        <label class="label is-size-7">Negative prompt</label>
-                        <div class="control">
-                            <textarea id="negativePromptBox" class="textarea code-textarea" placeholder="Negative prompt..."></textarea>
-                        </div>
+                    
+                    <div id="must_include" class="term-tab-content">
+                        <div id="mustIncludeTerms" class="tags"></div>
                     </div>
-                    <p class="is-size-7 has-text-grey mt-2">
-                        Saving writes to <code>working/AIGen.yaml</code>.
-                    </p>
-                </div>
-            </div>
-        </div>
-
-        <div id="turnBanner" class="notification is-info is-hidden">
-            <strong>Your turn:</strong> add a comment / nudges, then click <em>Submit feedback and continue</em>.
-        </div>
-
-        <div class="box" style="margin-top: 1.5rem;">
-            <div class="columns">
-                <div class="column">
-                    <h3 class="title is-6">Original</h3>
-                    <figure class="image">
-                        <img id="origImg" src="/api/project/{{ project_name }}/input/image" alt="Original">
-                    </figure>
-                </div>
-                <div class="column">
-                    <h3 class="title is-6">Latest</h3>
-                    <div style="position: relative;">
-                        <figure class="image">
-                            <img id="latestImg" src="" alt="Latest (will appear after iteration 1)">
-                        </figure>
-                        <div id="spinnerOverlay" class="is-hidden" style="position:absolute; inset:0; background:rgba(0,0,0,0.5); display:flex; align-items:center; justify-content:center; flex-direction:column; border-radius:8px;">
-                            <div class="spinner"></div>
-                            <div class="has-text-white has-text-weight-bold mt-2">Generating next iteration…</div>
-                        </div>
-                        <div id="latestMeta" class="box mt-2">
-                            <div class="level">
-                                <div class="level-left">
-                                    <div class="level-item" id="latestMetaText"></div>
-                                </div>
-                                <div class="level-right">
-                                    <div class="level-item">
-                                        <button id="describeBtn" class="button is-small is-light" disabled>
-                                            <span class="icon"><i class="fas fa-eye"></i></span>
-                                            <span>Describe with AIVis</span>
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        <div id="descriptionBox" class="box mt-2 is-hidden">
-                            <div class="level">
-                                <div class="level-left">
-                                    <div class="level-item">
-                                        <h4 class="title is-7">AIVis Description:</h4>
-                                    </div>
-                                </div>
-                                <div class="level-right">
-                                    <div class="level-item">
-                                        <button id="useDescriptionBtn" class="button is-small is-primary">
-                                            <span class="icon"><i class="fas fa-copy"></i></span>
-                                            <span>Use in feedback</span>
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                            <div id="descriptionText" class="content is-size-7" style="max-height: 200px; overflow-y: auto;"></div>
-                        </div>
+                    <div id="ban_terms" class="term-tab-content is-hidden">
+                        <div id="banTerms" class="tags"></div>
+                    </div>
+                    <div id="avoid_terms" class="term-tab-content is-hidden">
+                        <div id="avoidTerms" class="tags"></div>
                     </div>
                 </div>
             </div>
-        </div>
-
-        <div class="box" style="margin-top: 1.5rem;">
-            <h3 class="title is-6">Your feedback (used for the next iteration)</h3>
-            <div class="field is-grouped mb-3">
-                <div class="control">
-                    <button id="btnLessRandom" class="button is-light">Less random</button>
-                </div>
-                <div class="control">
-                    <button id="btnTooSimilar" class="button is-light">Too similar</button>
-                </div>
-                <div class="control">
-                    <span class="has-text-grey is-size-7">These nudge the next iteration gently by adjusting denoise/CFG.</span>
-                </div>
-            </div>
-            <div class="field">
-                <div class="control">
-                    <textarea id="commentBox" class="textarea" placeholder="Type a comment, e.g. 'Keep the pose, improve lighting, remove green clothing, more realistic skin texture'"></textarea>
-                </div>
-            </div>
-            <div class="field is-grouped">
-                <div class="control">
-                    <button id="submitFeedbackBtn" class="button is-primary" disabled>Submit feedback and continue</button>
-                </div>
-                <div class="control">
-                    <span id="feedbackHint" class="has-text-grey"></span>
-                </div>
-            </div>
-        </div>
-
-        <div class="box" style="margin-top: 1.5rem;">
-            <h3 class="title is-6">All iterations (latest at top)</h3>
-            <div id="iterationsList"></div>
         </div>
     </div>
 

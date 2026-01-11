@@ -136,6 +136,326 @@ def get_iterations(project_name: str, run_id: str):
     return jsonify({'iterations': iterations})
 
 
+@app.route('/api/project/<project_name>/input/describe')
+def describe_input(project_name: str):
+    """Get AIVis description of the input image."""
+    try:
+        project_dir = _safe_project_dir(project_name)
+    except Exception:
+        return jsonify({"error": "Invalid project"}), 400
+    
+    input_path = project_dir / "input" / "input.png"
+    if not input_path.exists():
+        return jsonify({"error": "Input image not found"}), 404
+    
+    # Load AIVis config and initialize client (same as describe_iteration)
+    try:
+        aivis_config_path = project_dir / "config" / "AIVis.yaml"
+        if not aivis_config_path.exists():
+            defaults_dir = Path(__file__).parent.parent / "defaults" / "config"
+            aivis_config_path = defaults_dir / "AIVis.yaml"
+        
+        with open(aivis_config_path, 'r', encoding='utf-8') as f:
+            aivis_config = yaml.safe_load(f) or {}
+    except Exception as e:
+        return jsonify({"error": f"Failed to load AIVis config: {e}"}), 500
+    
+    try:
+        import sys
+        from pathlib import Path as _Path
+        sys.path.insert(0, str(_Path(__file__).parent.parent / "src"))
+        from aivis_client import AIVisClient  # noqa: E402
+        
+        prompts_path = project_dir / "config" / "prompts.yaml"
+        if not prompts_path.exists():
+            prompts_path = _Path(__file__).parent.parent / "defaults" / "prompts.yaml"
+        
+        provider = str(aivis_config.get("provider") or "ollama")
+        model = str(aivis_config.get("model") or "qwen3-vl:4b")
+        api_key = aivis_config.get("api_key")
+        fallback_provider = aivis_config.get("fallback_provider")
+        fallback_model = aivis_config.get("fallback_model")
+        max_concurrent = int(aivis_config.get("max_concurrent", 1) or 1)
+        base_url = aivis_config.get("base_url")
+        
+        aivis = AIVisClient(
+            model=model, provider=provider, api_key=api_key,
+            fallback_provider=fallback_provider, fallback_model=fallback_model,
+            prompts_path=prompts_path, max_concurrent=max_concurrent, base_url=base_url,
+        )
+    except Exception as e:
+        return jsonify({"error": f"Failed to initialize AIVis: {e}"}), 500
+    
+    try:
+        description = aivis.describe_image(str(input_path))
+        return jsonify({"ok": True, "description": description}), 200
+    except Exception as e:
+        return jsonify({"error": f"Failed to describe image: {e}"}), 500
+
+
+@app.route('/api/project/<project_name>/mask/<mask_name>/prompts')
+def get_mask_prompts(project_name: str, mask_name: str):
+    """Get prompts for a specific mask (from rules.yaml)."""
+    try:
+        project_dir = _safe_project_dir(project_name)
+    except Exception:
+        return jsonify({"error": "Invalid project"}), 400
+    
+    rules_path = project_dir / "config" / "rules.yaml"
+    if not rules_path.exists():
+        return jsonify({"error": "rules.yaml not found"}), 404
+    
+    try:
+        rules_obj = yaml.safe_load(rules_path.read_text(encoding="utf-8")) or {}
+        prompts = rules_obj.get("prompts") or {}
+        masks_prompts = prompts.get("masks") or {}
+        global_prompts = prompts.get("global") or {}
+        
+        # Get mask-specific prompts, fallback to global
+        if mask_name and mask_name != "global" and isinstance(masks_prompts, dict) and mask_name in masks_prompts:
+            mask_p = masks_prompts[mask_name] or {}
+            return jsonify({
+                "positive": str(mask_p.get("positive") or ""),
+                "negative": str(mask_p.get("negative") or "")
+            }), 200
+        else:
+            return jsonify({
+                "positive": str(global_prompts.get("positive") or ""),
+                "negative": str(global_prompts.get("negative") or "")
+            }), 200
+    except Exception as e:
+        return jsonify({"error": f"Failed to load prompts: {e}"}), 500
+
+
+@app.route('/api/project/<project_name>/mask/<mask_name>/terms')
+def get_mask_terms(project_name: str, mask_name: str):
+    """Get terms (must_include, ban_terms, avoid_terms) for a specific mask."""
+    try:
+        project_dir = _safe_project_dir(project_name)
+    except Exception:
+        return jsonify({"error": "Invalid project"}), 400
+    
+    rules_path = project_dir / "config" / "rules.yaml"
+    if not rules_path.exists():
+        return jsonify({"error": "rules.yaml not found"}), 404
+    
+    try:
+        rules_obj = yaml.safe_load(rules_path.read_text(encoding="utf-8")) or {}
+        masking = rules_obj.get("masking") or {}
+        masks = masking.get("masks") or []
+        
+        # Find active criteria for this mask
+        active_fields = []
+        if mask_name == "global":
+            # For global, use all criteria
+            criteria_all = rules_obj.get("acceptance_criteria") or []
+            if isinstance(criteria_all, list):
+                for c in criteria_all:
+                    if isinstance(c, dict) and c.get("field"):
+                        active_fields.append(str(c.get("field")))
+        else:
+            # For specific mask, use its active_criteria
+            for m in masks:
+                if isinstance(m, dict) and str(m.get("name") or "") == mask_name:
+                    ac = m.get("active_criteria") or []
+                    if isinstance(ac, list):
+                        active_fields = [str(x).strip() for x in ac if str(x).strip()]
+                    break
+        
+        # Get criteria and extract terms
+        criteria = rules_obj.get("acceptance_criteria") or []
+        must_include = []
+        ban_terms = []
+        avoid_terms = []
+        
+        for crit in criteria:
+            if not isinstance(crit, dict):
+                continue
+            field = str(crit.get("field") or "")
+            if field not in active_fields:
+                continue
+            
+            must_include.extend(crit.get("must_include") or [])
+            ban_terms.extend(crit.get("ban_terms") or [])
+            avoid_terms.extend(crit.get("avoid_terms") or [])
+        
+        # Remove duplicates while preserving order
+        def dedupe(lst):
+            seen = set()
+            result = []
+            for item in lst:
+                item_str = str(item).strip()
+                if item_str and item_str.lower() not in seen:
+                    seen.add(item_str.lower())
+                    result.append(item_str)
+            return result
+        
+        return jsonify({
+            "must_include": dedupe(must_include),
+            "ban_terms": dedupe(ban_terms),
+            "avoid_terms": dedupe(avoid_terms)
+        }), 200
+    except Exception as e:
+        return jsonify({"error": f"Failed to load terms: {e}"}), 500
+
+
+@app.route('/api/project/<project_name>/working/aigen/settings')
+def get_aigen_settings(project_name: str):
+    """Get current AIGen settings (denoise, cfg, scheduler, model, etc.)."""
+    try:
+        project_dir = _safe_project_dir(project_name)
+    except Exception:
+        return jsonify({"error": "Invalid project"}), 400
+    
+    aigen_path = project_dir / "working" / "AIGen.yaml"
+    if not aigen_path.exists():
+        aigen_path = project_dir / "config" / "AIGen.yaml"
+    
+    if not aigen_path.exists():
+        return jsonify({"error": "AIGen.yaml not found"}), 404
+    
+    try:
+        aigen = yaml.safe_load(aigen_path.read_text(encoding="utf-8")) or {}
+        params = aigen.get("parameters") or {}
+        model_info = aigen.get("model") or {}
+        
+        return jsonify({
+            "denoise": params.get("denoise", 0.5),
+            "cfg": params.get("cfg", 7.0),
+            "steps": params.get("steps", 25),
+            "sampler_name": params.get("sampler_name", "dpmpp_2m_sde_gpu"),
+            "scheduler": params.get("scheduler", "karras"),
+            "checkpoint": model_info.get("ckpt_name", "unknown"),
+            "workflow": aigen.get("workflow_file", "unknown")
+        }), 200
+    except Exception as e:
+        return jsonify({"error": f"Failed to load settings: {e}"}), 500
+
+
+@app.route('/api/project/<project_name>/run/<run_id>/suggest_prompts')
+def suggest_prompts(project_name: str, run_id: str):
+    """Get AIVis suggestions for improving prompts based on latest iteration."""
+    try:
+        project_dir = _safe_project_dir(project_name)
+    except Exception:
+        return jsonify({"error": "Invalid project"}), 400
+    
+    # Get latest iteration
+    run_dir = project_dir / "working" / run_id
+    metadata_dir = run_dir / "metadata"
+    if not metadata_dir.exists():
+        return jsonify({"error": "No iterations found"}), 404
+    
+    # Find latest iteration
+    meta_files = sorted(metadata_dir.glob('iteration_*_metadata.json'))
+    if not meta_files:
+        return jsonify({"error": "No iterations found"}), 404
+    
+    latest_meta = meta_files[-1]
+    with open(latest_meta, 'r', encoding='utf-8') as f:
+        iteration_data = json.load(f)
+    
+    iteration_num = iteration_data.get('iteration', 1)
+    image_path = run_dir / "images" / f"iteration_{iteration_num}.png"
+    if not image_path.exists():
+        return jsonify({"error": "Iteration image not found"}), 404
+    
+    # Get current prompts
+    current_positive = iteration_data.get('prompts_used', {}).get('positive', '')
+    current_negative = iteration_data.get('prompts_used', {}).get('negative', '')
+    evaluation = iteration_data.get('evaluation', {})
+    comparison = iteration_data.get('comparison', {})
+    
+    # Initialize AIVis (same pattern as describe_iteration)
+    try:
+        aivis_config_path = project_dir / "config" / "AIVis.yaml"
+        if not aivis_config_path.exists():
+            defaults_dir = Path(__file__).parent.parent / "defaults" / "config"
+            aivis_config_path = defaults_dir / "AIVis.yaml"
+        
+        with open(aivis_config_path, 'r', encoding='utf-8') as f:
+            aivis_config = yaml.safe_load(f) or {}
+    except Exception as e:
+        return jsonify({"error": f"Failed to load AIVis config: {e}"}), 500
+    
+    try:
+        import sys
+        from pathlib import Path as _Path
+        sys.path.insert(0, str(_Path(__file__).parent.parent / "src"))
+        from aivis_client import AIVisClient  # noqa: E402
+        from prompt_improver import PromptImprover  # noqa: E402
+        
+        prompts_path = project_dir / "config" / "prompts.yaml"
+        if not prompts_path.exists():
+            prompts_path = _Path(__file__).parent.parent / "defaults" / "prompts.yaml"
+        
+        provider = str(aivis_config.get("provider") or "ollama")
+        model = str(aivis_config.get("model") or "qwen3-vl:4b")
+        api_key = aivis_config.get("api_key")
+        fallback_provider = aivis_config.get("fallback_provider")
+        fallback_model = aivis_config.get("fallback_model")
+        max_concurrent = int(aivis_config.get("max_concurrent", 1) or 1)
+        base_url = aivis_config.get("base_url")
+        
+        aivis = AIVisClient(
+            model=model, provider=provider, api_key=api_key,
+            fallback_provider=fallback_provider, fallback_model=fallback_model,
+            prompts_path=prompts_path, max_concurrent=max_concurrent, base_url=base_url,
+        )
+        
+        # Get original description
+        input_path = project_dir / "input" / "input.png"
+        original_desc = aivis.describe_image(str(input_path)) if input_path.exists() else None
+        
+        # Use prompt improver
+        import logging
+        logger = logging.getLogger(__name__)
+        improver = PromptImprover(logger, aivis, lambda: original_desc, "")
+        
+        # Get criteria for context
+        rules_path = project_dir / "config" / "rules.yaml"
+        rules_obj = yaml.safe_load(rules_path.read_text(encoding="utf-8")) or {} if rules_path.exists() else {}
+        criteria_defs = rules_obj.get("acceptance_criteria", []) or []
+        criteria_by_field = {c.get('field'): c for c in criteria_defs if isinstance(c, dict) and c.get('field')}
+        
+        failed_criteria = []
+        criteria_results = evaluation.get('criteria_results', {}) or {}
+        for field, result in criteria_results.items():
+            crit = criteria_by_field.get(field)
+            if not crit:
+                continue
+            ctype = (crit.get('type') or 'boolean').lower()
+            min_v = crit.get('min', 0)
+            if ctype == 'boolean':
+                if result is not True:
+                    failed_criteria.append(field)
+            else:
+                if isinstance(result, (int, float)) and result < min_v:
+                    failed_criteria.append(field)
+        
+        improved_positive, improved_negative, diff_info = improver.improve_prompts(
+            current_positive=current_positive,
+            current_negative=current_negative,
+            evaluation=evaluation,
+            comparison=comparison,
+            failed_criteria=failed_criteria,
+            criteria_defs=criteria_defs,
+            criteria_by_field=criteria_by_field,
+            original_description=original_desc,
+        )
+        
+        return jsonify({
+            "ok": True,
+            "suggested_positive": improved_positive,
+            "suggested_negative": improved_negative,
+            "current_positive": current_positive,
+            "current_negative": current_negative,
+            "diff_info": diff_info
+        }), 200
+    except Exception as e:
+        return jsonify({"error": f"Failed to generate suggestions: {e}"}), 500
+
+
 @app.route('/api/project/<project_name>/run/<run_id>/describe/<int:iteration_number>')
 def describe_iteration(project_name: str, run_id: str, iteration_number: int):
     """Get AIVis description of an iteration image."""

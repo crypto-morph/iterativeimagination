@@ -2,49 +2,27 @@
 
 const project = window.__LIVE_PROJECT__;
 
+// State
 let runId = null;
 let pollTimer = null;
-let pendingNudge = { less_random: false, too_similar: false };
-let rulesLoadedText = null;
-let promptsLoaded = false;
+let currentMask = "";
 let currentIteration = null;
-let currentDescription = null;
+let currentSettings = null;
+let currentTerms = { must_include: [], ban_terms: [], avoid_terms: [] };
+let currentSuggestion = null;
 
+// Utility functions
 function $(id) {
   return document.getElementById(id);
 }
 
 function setStatus(text) {
-  $("statusText").textContent = text || "";
-}
-
-function setRulesStatus(text) {
-  const el = $("rulesStatus");
-  if (el) el.textContent = text || "";
-}
-
-function setPromptsStatus(text) {
-  const el = $("promptsStatus");
-  if (el) el.textContent = text || "";
-}
-
-function showLintBox(title, items, kind) {
-  const box = $("rulesLint");
-  if (!box) return;
-  if (!items || !items.length) {
-    box.classList.add("is-hidden");
-    box.innerHTML = "";
-    return;
-  }
-    box.classList.remove("is-hidden");
-  box.classList.remove("error", "warn");
-  box.classList.add(kind === "error" ? "error" : "warn");
-  const li = items.map((x) => `<li>${escapeHtml(String(x))}</li>`).join("");
-  box.innerHTML = `<strong>${escapeHtml(title)}</strong><ul>${li}</ul>`;
+  const el = $("statusText");
+  if (el) el.textContent = text || "Ready";
 }
 
 function escapeHtml(s) {
-  return s
+  return String(s)
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
@@ -52,124 +30,225 @@ function escapeHtml(s) {
     .replaceAll("'", "&#039;");
 }
 
-function setButtonActive(btn, active) {
-  if (active) btn.classList.add("active");
-  else btn.classList.remove("active");
-}
-
-async function startRun() {
-  const reset = $("resetChk").checked;
-  const maxIterations = parseInt($("maxIter").value || "20", 10);
-  $("startBtn").disabled = true;
-  setStatus("Starting...");
-
-  const res = await fetch(`/api/project/${project}/live/start`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ reset, max_iterations: maxIterations })
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    $("startBtn").disabled = false;
-    setStatus(data.error || "Failed to start");
-    return;
-  }
-
-  runId = data.run_id;
-  setStatus(`Live run started: ${runId}`);
-  startPolling();
-}
-
-async function loadRules() {
-  $("loadRulesBtn").disabled = true;
-  setRulesStatus("Loading rules...");
-  try {
-    const res = await fetch(`/api/project/${project}/config/rules`);
-    const text = await res.text();
-    if (!res.ok) throw new Error(text || "Failed to load rules");
-    $("rulesBox").value = text;
-    rulesLoadedText = text;
-    $("saveRulesBtn").disabled = false;
-    showLintBox("", [], "warn");
-    setRulesStatus("Rules loaded. Edit and click Save.");
-  } catch (e) {
-    setRulesStatus(`Error: ${e.message}`);
-  } finally {
-    $("loadRulesBtn").disabled = false;
-  }
-}
-
-async function saveRules() {
-  const text = $("rulesBox").value || "";
-  if (!text.trim()) {
-    setRulesStatus("Rules are empty (not saving).");
-    return;
-  }
-
-  $("saveRulesBtn").disabled = true;
-  setRulesStatus("Saving rules...");
-  showLintBox("", [], "warn");
-
-  try {
-    const res = await fetch(`/api/project/${project}/config/rules`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text })
-    });
-
-    const contentType = res.headers.get("content-type") || "";
-    const data = contentType.includes("application/json") ? await res.json() : { error: await res.text() };
-
-    if (!res.ok) {
-      const errs = data.errors || [];
-      const warns = data.warnings || [];
-      if (errs.length) showLintBox("Errors (fix these before saving):", errs, "error");
-      if (warns.length) showLintBox("Warnings:", warns, "warn");
-      setRulesStatus(data.error || "Failed to save rules");
-      $("saveRulesBtn").disabled = false;
-      return;
+// Diff highlighting (GitHub-style)
+function highlightDiff(oldText, newText) {
+  const oldWords = oldText.split(/(\s+)/);
+  const newWords = newText.split(/(\s+)/);
+  const result = [];
+  let oldIdx = 0;
+  let newIdx = 0;
+  
+  while (oldIdx < oldWords.length || newIdx < newWords.length) {
+    if (oldIdx >= oldWords.length) {
+      // Only new words left
+      result.push(`<span class="diff-added">${escapeHtml(newWords[newIdx])}</span>`);
+      newIdx++;
+    } else if (newIdx >= newWords.length) {
+      // Only old words left
+      result.push(`<span class="diff-removed">${escapeHtml(oldWords[oldIdx])}</span>`);
+      oldIdx++;
+    } else if (oldWords[oldIdx] === newWords[newIdx]) {
+      // Same word
+      result.push(`<span class="diff-unchanged">${escapeHtml(oldWords[oldIdx])}</span>`);
+      oldIdx++;
+      newIdx++;
+    } else {
+      // Different - try to find next match
+      const oldWord = oldWords[oldIdx].trim();
+      const newWord = newWords[newIdx].trim();
+      
+      if (oldWord && !newWord) {
+        result.push(`<span class="diff-removed">${escapeHtml(oldWords[oldIdx])}</span>`);
+        oldIdx++;
+      } else if (!oldWord && newWord) {
+        result.push(`<span class="diff-added">${escapeHtml(newWords[newIdx])}</span>`);
+        newIdx++;
+      } else {
+        // Both are non-empty, different words
+        result.push(`<span class="diff-removed">${escapeHtml(oldWords[oldIdx])}</span>`);
+        result.push(`<span class="diff-added">${escapeHtml(newWords[newIdx])}</span>`);
+        oldIdx++;
+        newIdx++;
+      }
     }
+  }
+  
+  return result.join("");
+}
 
-    const warns = data.warnings || [];
-    if (warns.length) showLintBox("Warnings:", warns, "warn");
-    else showLintBox("", [], "warn");
-
-    rulesLoadedText = text;
-    setRulesStatus("Saved. Changes will apply from the next iteration.");
+// Load masks dropdown
+async function loadMasks() {
+  try {
+    const res = await fetch(`/api/project/${project}/input/masks`);
+    const data = await res.json();
+    const masks = (data && data.masks) || [];
+    
+    const select = $("maskSelect");
+    if (!select) return;
+    
+    select.innerHTML = "";
+    
+    // Add "global" option
+    const globalOpt = document.createElement("option");
+    globalOpt.value = "global";
+    globalOpt.textContent = "Global (no mask)";
+    select.appendChild(globalOpt);
+    
+    // Add mask options
+    for (const mask of masks) {
+      const opt = document.createElement("option");
+      opt.value = mask.name;
+      opt.textContent = mask.name;
+      select.appendChild(opt);
+    }
+    
+    // Set default to first mask or global
+    if (masks.length > 0) {
+      select.value = masks[0].name;
+      currentMask = masks[0].name;
+    } else {
+      select.value = "global";
+      currentMask = "global";
+    }
+    
+    // Load data for selected mask
+    await loadMaskData();
   } catch (e) {
-    setRulesStatus(`Error: ${e.message}`);
-    $("saveRulesBtn").disabled = false;
+    console.error("Failed to load masks:", e);
   }
 }
 
-async function loadPrompts() {
-  $("loadPromptsBtn").disabled = true;
-  setPromptsStatus("Loading prompts...");
+// Load mask-specific data (prompts, terms)
+async function loadMaskData() {
+  if (!currentMask) return;
+  
+  // Load prompts
+  try {
+    const res = await fetch(`/api/project/${project}/mask/${currentMask}/prompts`);
+    const data = await res.json();
+    if (res.ok) {
+      $("inputPositivePrompt").value = data.positive || "";
+      $("inputNegativePrompt").value = data.negative || "";
+    }
+  } catch (e) {
+    console.error("Failed to load mask prompts:", e);
+  }
+  
+  // Load terms
+  try {
+    const res = await fetch(`/api/project/${project}/mask/${currentMask}/terms`);
+    const data = await res.json();
+    if (res.ok) {
+      currentTerms = {
+        must_include: data.must_include || [],
+        ban_terms: data.ban_terms || [],
+        avoid_terms: data.avoid_terms || []
+      };
+      renderTerms();
+    }
+  } catch (e) {
+    console.error("Failed to load mask terms:", e);
+  }
+}
+
+// Render terms
+function renderTerms() {
+  renderTermList("must_include", currentTerms.must_include);
+  renderTermList("ban_terms", currentTerms.ban_terms);
+  renderTermList("avoid_terms", currentTerms.avoid_terms);
+}
+
+function renderTermList(type, terms) {
+  const container = $(type === "must_include" ? "mustIncludeTerms" : type === "ban_terms" ? "banTerms" : "avoidTerms");
+  if (!container) return;
+  
+  container.innerHTML = "";
+  
+  if (terms.length === 0) {
+    container.innerHTML = '<span class="has-text-grey is-size-7">No terms defined</span>';
+    return;
+  }
+  
+  terms.forEach((term, idx) => {
+    const tag = document.createElement("span");
+    tag.className = "tag term-tag";
+    tag.innerHTML = `
+      <span>${escapeHtml(term)}</span>
+      <button class="delete is-small" data-term-type="${type}" data-term-idx="${idx}"></button>
+    `;
+    container.appendChild(tag);
+  });
+  
+  // Wire delete buttons
+  container.querySelectorAll(".delete").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const termType = btn.dataset.termType;
+      const termIdx = parseInt(btn.dataset.termIdx);
+      if (termType === "must_include") {
+        currentTerms.must_include.splice(termIdx, 1);
+      } else if (termType === "ban_terms") {
+        currentTerms.ban_terms.splice(termIdx, 1);
+      } else if (termType === "avoid_terms") {
+        currentTerms.avoid_terms.splice(termIdx, 1);
+      }
+      renderTerms();
+    });
+  });
+}
+
+// Load settings
+async function loadSettings() {
+  try {
+    const res = await fetch(`/api/project/${project}/working/aigen/settings`);
+    const data = await res.json();
+    if (res.ok) {
+      currentSettings = data;
+      renderSettings();
+    }
+  } catch (e) {
+    console.error("Failed to load settings:", e);
+  }
+}
+
+function renderSettings() {
+  const container = $("settingsSummary");
+  if (!container || !currentSettings) return;
+  
+  container.innerHTML = `
+    <table class="table is-narrow is-fullwidth">
+      <tr><td><strong>Denoise:</strong></td><td>${currentSettings.denoise}</td></tr>
+      <tr><td><strong>CFG:</strong></td><td>${currentSettings.cfg}</td></tr>
+      <tr><td><strong>Steps:</strong></td><td>${currentSettings.steps}</td></tr>
+      <tr><td><strong>Sampler:</strong></td><td>${currentSettings.sampler_name}</td></tr>
+      <tr><td><strong>Scheduler:</strong></td><td>${currentSettings.scheduler}</td></tr>
+      <tr><td><strong>Checkpoint:</strong></td><td>${currentSettings.checkpoint}</td></tr>
+      <tr><td><strong>Workflow:</strong></td><td>${currentSettings.workflow}</td></tr>
+    </table>
+  `;
+}
+
+// Load iteration prompts
+async function loadIterationPrompts() {
   try {
     const res = await fetch(`/api/project/${project}/working/aigen/prompts`, { cache: "no-store" });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Failed to load prompts");
-    $("positivePromptBox").value = data.positive || "";
-    $("negativePromptBox").value = data.negative || "";
-    $("savePromptsBtn").disabled = false;
-    promptsLoaded = true;
-    setPromptsStatus("Prompts loaded. Edit and click Save.");
+    if (res.ok) {
+      $("iterationPositivePrompt").value = data.positive || "";
+      $("iterationNegativePrompt").value = data.negative || "";
+    }
   } catch (e) {
-    setPromptsStatus(`Error: ${e.message}`);
-  } finally {
-    $("loadPromptsBtn").disabled = false;
+    console.error("Failed to load iteration prompts:", e);
   }
 }
 
-async function savePrompts() {
-  if (!promptsLoaded) {
-    setPromptsStatus("Load prompts first.");
-    return;
-  }
-  const positive = $("positivePromptBox").value || "";
-  const negative = $("negativePromptBox").value || "";
-  $("savePromptsBtn").disabled = true;
-  setPromptsStatus("Saving prompts...");
+// Save iteration prompts
+async function saveIterationPrompts() {
+  const positive = $("iterationPositivePrompt").value || "";
+  const negative = $("iterationNegativePrompt").value || "";
+  
+  const statusEl = $("promptsStatus");
+  statusEl.textContent = "Saving...";
+  
   try {
     const res = await fetch(`/api/project/${project}/working/aigen/prompts`, {
       method: "POST",
@@ -177,15 +256,189 @@ async function savePrompts() {
       body: JSON.stringify({ positive, negative })
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Failed to save prompts");
-    setPromptsStatus("Saved. Next iteration will use these prompts.");
+    if (!res.ok) {
+      statusEl.textContent = data.error || "Failed to save";
+      return;
+    }
+    statusEl.textContent = "Saved successfully";
+    setTimeout(() => { statusEl.textContent = ""; }, 2000);
   } catch (e) {
-    setPromptsStatus(`Error: ${e.message}`);
-  } finally {
-    $("savePromptsBtn").disabled = false;
+    statusEl.textContent = `Error: ${e.message}`;
   }
 }
 
+// Describe images
+async function describeInput() {
+  const container = $("inputDescription");
+  container.innerHTML = '<span class="has-text-grey">Generating description...</span>';
+  
+  try {
+    const res = await fetch(`/api/project/${project}/input/describe`);
+    const data = await res.json();
+    if (res.ok) {
+      container.textContent = data.description || "No description available";
+    } else {
+      container.innerHTML = `<span class="has-text-danger">${escapeHtml(data.error || "Failed")}</span>`;
+    }
+  } catch (e) {
+    container.innerHTML = `<span class="has-text-danger">Error: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+async function describeLatest() {
+  if (!runId || currentIteration === null) return;
+  
+  const container = $("latestDescription");
+  container.innerHTML = '<span class="has-text-grey">Generating description...</span>';
+  
+  try {
+    const res = await fetch(`/api/project/${project}/run/${runId}/describe/${currentIteration}`);
+    const data = await res.json();
+    if (res.ok) {
+      container.textContent = data.description || "No description available";
+    } else {
+      container.innerHTML = `<span class="has-text-danger">${escapeHtml(data.error || "Failed")}</span>`;
+    }
+  } catch (e) {
+    container.innerHTML = `<span class="has-text-danger">Error: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+// Generate prompt suggestion
+async function generateSuggestion() {
+  if (!runId) {
+    setStatus("No run active. Click 'Run' first.");
+    return;
+  }
+  
+  const btn = $("generateSuggestionBtn");
+  const box = $("suggestionBox");
+  const placeholder = $("suggestionPlaceholder");
+  
+  btn.disabled = true;
+  btn.innerHTML = '<span class="icon"><i class="fas fa-spinner fa-spin"></i></span><span>Generating...</span>';
+  box.classList.add("is-hidden");
+  placeholder.textContent = "Generating AI suggestions...";
+  
+  try {
+    const res = await fetch(`/api/project/${project}/run/${runId}/suggest_prompts`);
+    const data = await res.json();
+    if (!res.ok) {
+      placeholder.innerHTML = `<span class="has-text-danger">${escapeHtml(data.error || "Failed")}</span>`;
+      return;
+    }
+    
+    currentSuggestion = data;
+    
+    // Render with diff highlighting
+    const posDiff = highlightDiff(data.current_positive || "", data.suggested_positive || "");
+    const negDiff = highlightDiff(data.current_negative || "", data.suggested_negative || "");
+    
+    $("suggestedPositivePrompt").innerHTML = posDiff;
+    $("suggestedNegativePrompt").innerHTML = negDiff;
+    
+    box.classList.remove("is-hidden");
+    placeholder.classList.add("is-hidden");
+    setStatus("Suggestion generated");
+  } catch (e) {
+    placeholder.innerHTML = `<span class="has-text-danger">Error: ${escapeHtml(e.message)}</span>`;
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<span class="icon"><i class="fas fa-magic"></i></span><span>Generate</span>';
+  }
+}
+
+// Apply suggestion
+function applySuggestion() {
+  if (!currentSuggestion) return;
+  
+  // Get plain text from contenteditable divs (strip HTML)
+  const posEl = $("suggestedPositivePrompt");
+  const negEl = $("suggestedNegativePrompt");
+  
+  const positive = posEl.textContent || posEl.innerText || "";
+  const negative = negEl.textContent || negEl.innerText || "";
+  
+  $("iterationPositivePrompt").value = positive.trim();
+  $("iterationNegativePrompt").value = negative.trim();
+  
+  setStatus("Suggestion applied to iteration prompts");
+  $("promptsStatus").textContent = "Applied from suggestion (not saved yet)";
+}
+
+// Reset run
+async function resetRun() {
+  if (!confirm("Reset the current run? This will clear the checkpoint.")) return;
+  
+  try {
+    const res = await fetch(`/api/project/${project}/live/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reset: true, max_iterations: parseInt($("maxIterInput").value || "20", 10) })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setStatus(data.error || "Failed to reset");
+      return;
+    }
+    
+    runId = data.run_id;
+    setStatus(`Run reset: ${runId}`);
+    startPolling();
+  } catch (e) {
+    setStatus(`Error: ${e.message}`);
+  }
+}
+
+// Run iteration
+async function runIteration() {
+  if (!currentMask) {
+    setStatus("Please select a mask first");
+    return;
+  }
+  
+  // Save prompts first
+  await saveIterationPrompts();
+  
+  // Start/continue run
+  const maxIter = parseInt($("maxIterInput").value || "20", 10);
+  
+  $("runBtn").disabled = true;
+  setStatus("Starting run...");
+  
+  try {
+    const res = await fetch(`/api/project/${project}/live/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reset: false, max_iterations: maxIter })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setStatus(data.error || "Failed to start");
+      $("runBtn").disabled = false;
+      return;
+    }
+    
+    runId = data.run_id;
+    setStatus(`Run started: ${runId}`);
+    startPolling();
+    
+    // Auto-describe images after a delay
+    setTimeout(() => {
+      describeInput();
+      pollOnce().then(() => {
+        if (currentIteration) {
+          describeLatest();
+        }
+      });
+    }, 2000);
+  } catch (e) {
+    setStatus(`Error: ${e.message}`);
+    $("runBtn").disabled = false;
+  }
+}
+
+// Polling
 async function fetchState() {
   if (!runId) return null;
   const res = await fetch(`/api/project/${project}/live/${runId}/state`);
@@ -204,17 +457,8 @@ async function fetchIterations() {
 
 function renderLatest(state, iterations) {
   const latest = iterations.length ? iterations[iterations.length - 1] : null;
-  const submitBtn = $("submitFeedbackBtn");
-  const banner = $("turnBanner");
   const spinner = $("spinnerOverlay");
-  const describeBtn = $("describeBtn");
-  const latestMetaText = $("latestMetaText");
-
-  // Safely handle elements that might not exist
-  if (!submitBtn || !banner || !spinner) {
-    return; // Elements not ready yet
-  }
-
+  
   if (latest) {
     const n = latest.iteration_number;
     currentIteration = n;
@@ -222,84 +466,25 @@ function renderLatest(state, iterations) {
     if (latestImg) {
       latestImg.src = `/api/project/${project}/run/${runId}/image/iteration_${n}.png`;
     }
-    const score = (latest.evaluation || {}).overall_score;
-    if (latestMetaText) {
-      latestMetaText.textContent = `Iteration ${n} | score: ${score}`;
-    }
-    if (describeBtn) {
-      describeBtn.disabled = false;
+    
+    // Auto-describe if not already described
+    const descEl = $("latestDescription");
+    if (descEl && descEl.textContent.includes("No iteration")) {
+      describeLatest();
     }
   } else {
     currentIteration = null;
-    if (describeBtn) {
-      describeBtn.disabled = true;
-    }
   }
-
-  if (state.status === "waiting") {
-    submitBtn.disabled = false;
-    const feedbackHint = $("feedbackHint");
-    if (feedbackHint) {
-      feedbackHint.textContent = `Waiting for your feedback for iteration ${state.expected_feedback_for_iteration}.`;
-    }
-    banner.classList.remove("is-hidden");
-    spinner.classList.add("is-hidden");
-  } else if (state.status === "running" || state.status === "starting") {
-    submitBtn.disabled = true;
-    const feedbackHint = $("feedbackHint");
-    if (feedbackHint) {
-      feedbackHint.textContent = "Generating... (feedback will unlock between iterations)";
-    }
-    banner.classList.add("is-hidden");
-    spinner.classList.remove("is-hidden");
-  } else if (state.status === "finished") {
-    submitBtn.disabled = true;
-    const feedbackHint = $("feedbackHint");
-    if (feedbackHint) {
-      feedbackHint.textContent = state.message || "Finished";
-    }
-    banner.classList.add("is-hidden");
-    spinner.classList.add("is-hidden");
-  } else if (state.status === "error") {
-    submitBtn.disabled = true;
-    const feedbackHint = $("feedbackHint");
-    if (feedbackHint) {
-      feedbackHint.textContent = `Error: ${state.message || "unknown"}`;
-    }
-    banner.classList.add("is-hidden");
-    spinner.classList.add("is-hidden");
+  
+  if (state.status === "running" || state.status === "starting") {
+    if (spinner) spinner.classList.remove("is-hidden");
+    $("runBtn").disabled = true;
   } else {
-    submitBtn.disabled = true;
-    const feedbackHint = $("feedbackHint");
-    if (feedbackHint) {
-      feedbackHint.textContent = "";
-    }
-    banner.classList.add("is-hidden");
-    spinner.classList.add("is-hidden");
+    if (spinner) spinner.classList.add("is-hidden");
+    $("runBtn").disabled = false;
   }
-
+  
   setStatus(`${state.status} | iter ${state.current_iteration} | best ${state.best_score} (iter ${state.best_iteration || "-"})`);
-}
-
-function renderIterations(iterations) {
-  const list = $("iterationsList");
-  list.innerHTML = "";
-
-  const reversed = [...iterations].reverse();
-  reversed.forEach((it) => {
-    const n = it.iteration_number;
-    const score = (it.evaluation || {}).overall_score;
-    const div = document.createElement("div");
-    div.className = "iteration-item";
-    div.innerHTML = `
-      <div class="iteration-header">
-        <strong>Iteration ${n}</strong>
-        <span class="muted">score: ${score}</span>
-      </div>
-      <img class="thumb" src="/api/project/${project}/run/${runId}/image/iteration_${n}.png" alt="iteration ${n}">
-    `;
-    list.appendChild(div);
-  });
 }
 
 async function pollOnce() {
@@ -308,7 +493,6 @@ async function pollOnce() {
     const iterations = await fetchIterations();
     if (!state) return;
     renderLatest(state, iterations);
-    renderIterations(iterations);
   } catch (e) {
     setStatus(`poll error: ${e.message}`);
   }
@@ -320,103 +504,75 @@ function startPolling() {
   pollTimer = setInterval(pollOnce, 2000);
 }
 
-async function submitFeedback() {
-  if (!runId) return;
-
-  const state = await fetchState();
-  const iteration = state.expected_feedback_for_iteration || state.current_iteration || 0;
-  const comment = $("commentBox").value || "";
-
-  $("submitFeedbackBtn").disabled = true;
-  setStatus("Submitting feedback...");
-
-  const res = await fetch(`/api/project/${project}/live/${runId}/feedback`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ iteration, comment, nudge: pendingNudge })
+// Tab switching
+function initTabs() {
+  // Prompt tabs
+  const promptTabs = document.querySelectorAll('.tabs.is-boxed [data-tab]');
+  promptTabs.forEach(tab => {
+    tab.addEventListener("click", (e) => {
+      e.preventDefault();
+      const tabName = tab.dataset.tab;
+      
+      // Update tab buttons
+      tab.parentElement.parentElement.querySelectorAll("li").forEach(li => li.classList.remove("is-active"));
+      tab.parentElement.classList.add("is-active");
+      
+      // Update content
+      document.querySelectorAll(".tab-content").forEach(content => {
+        content.classList.add("is-hidden");
+      });
+      const contentEl = $(tabName);
+      if (contentEl) {
+        contentEl.classList.remove("is-hidden");
+      }
+    });
   });
-  const data = await res.json();
-  if (!res.ok) {
-    setStatus(data.error || "Failed to submit feedback");
-    $("submitFeedbackBtn").disabled = false;
-    return;
-  }
-
-  // Reset UI nudge state after submit
-  pendingNudge = { less_random: false, too_similar: false };
-  setButtonActive($("btnLessRandom"), false);
-  setButtonActive($("btnTooSimilar"), false);
-  $("commentBox").value = "";
-  setStatus("Feedback submitted, continuing...");
-  pollOnce();
+  
+  // Term tabs
+  const termTabs = document.querySelectorAll('.tabs.is-small [data-term-tab]');
+  termTabs.forEach(tab => {
+    tab.addEventListener("click", (e) => {
+      e.preventDefault();
+      const tabName = tab.dataset.termTab;
+      
+      // Update tab buttons
+      tab.parentElement.parentElement.querySelectorAll("li").forEach(li => li.classList.remove("is-active"));
+      tab.parentElement.classList.add("is-active");
+      
+      // Update content
+      document.querySelectorAll(".term-tab-content").forEach(content => {
+        content.classList.add("is-hidden");
+      });
+      const contentEl = $(tabName);
+      if (contentEl) {
+        contentEl.classList.remove("is-hidden");
+      }
+    });
+  });
 }
 
-async function describeCurrentIteration() {
-  if (!runId || currentIteration === null) return;
-  
-  const describeBtn = $("describeBtn");
-  const descriptionBox = $("descriptionBox");
-  const descriptionText = $("descriptionText");
-  
-  describeBtn.disabled = true;
-  describeBtn.innerHTML = '<span class="icon"><i class="fas fa-spinner fa-spin"></i></span><span>Describing...</span>';
-  descriptionBox.classList.add("is-hidden");
-  
-  try {
-    const res = await fetch(`/api/project/${project}/run/${runId}/describe/${currentIteration}`);
-    const data = await res.json();
-    if (!res.ok) {
-      setStatus(data.error || "Failed to describe image");
-      return;
-    }
-    
-    currentDescription = data.description;
-    descriptionText.textContent = data.description;
-    descriptionBox.classList.remove("is-hidden");
-    setStatus(`Iteration ${currentIteration} described by AIVis`);
-  } catch (e) {
-    setStatus(`Error: ${e.message}`);
-  } finally {
-    describeBtn.disabled = false;
-    describeBtn.innerHTML = '<span class="icon"><i class="fas fa-eye"></i></span><span>Describe with AIVis</span>';
-  }
-}
-
-function useDescriptionInFeedback() {
-  if (!currentDescription) return;
-  
-  const commentBox = $("commentBox");
-  const currentText = commentBox.value.trim();
-  
-  // Add description to feedback, with separator if there's existing text
-  if (currentText) {
-    commentBox.value = `${currentText}\n\n--- AIVis Description ---\n${currentDescription}`;
-  } else {
-    commentBox.value = `--- AIVis Description ---\n${currentDescription}`;
-  }
-  
-  setStatus("Description added to feedback box");
-}
-
+// Wire UI
 function wireUI() {
-  $("startBtn").addEventListener("click", startRun);
-  $("submitFeedbackBtn").addEventListener("click", submitFeedback);
-  $("loadRulesBtn").addEventListener("click", loadRules);
-  $("saveRulesBtn").addEventListener("click", saveRules);
-  $("loadPromptsBtn").addEventListener("click", loadPrompts);
-  $("savePromptsBtn").addEventListener("click", savePrompts);
-  $("describeBtn").addEventListener("click", describeCurrentIteration);
-  $("useDescriptionBtn").addEventListener("click", useDescriptionInFeedback);
-
-  $("btnLessRandom").addEventListener("click", () => {
-    pendingNudge.less_random = !pendingNudge.less_random;
-    setButtonActive($("btnLessRandom"), pendingNudge.less_random);
+  $("resetBtn").addEventListener("click", resetRun);
+  $("runBtn").addEventListener("click", runIteration);
+  $("maskSelect").addEventListener("change", (e) => {
+    currentMask = e.target.value;
+    loadMaskData();
   });
-  $("btnTooSimilar").addEventListener("click", () => {
-    pendingNudge.too_similar = !pendingNudge.too_similar;
-    setButtonActive($("btnTooSimilar"), pendingNudge.too_similar);
-  });
+  $("savePromptsBtn").addEventListener("click", saveIterationPrompts);
+  $("generateSuggestionBtn").addEventListener("click", generateSuggestion);
+  $("applySuggestionBtn").addEventListener("click", applySuggestion);
+  
+  initTabs();
 }
 
-wireUI();
+// Initialize
+async function init() {
+  await loadMasks();
+  await loadSettings();
+  await loadIterationPrompts();
+  await describeInput();
+  wireUI();
+}
 
+init();
