@@ -695,22 +695,46 @@ function initTabs() {
 
 // Wire UI
 function wireUI() {
-  $("resetBtn").addEventListener("click", resetRun);
-  $("runBtn").addEventListener("click", runIteration);
-  $("maskSelect").addEventListener("change", (e) => {
-    currentMask = e.target.value;
-    loadMaskData();
-  });
-  $("savePromptsBtn").addEventListener("click", savePrompts);
-  $("saveAsDefaultBtn").addEventListener("click", saveAsProjectDefault);
-  $("saveSettingsBtn").addEventListener("click", saveSettings);
-  $("generateSuggestionBtn").addEventListener("click", generateSuggestion);
-  $("applySuggestionBtn").addEventListener("click", () => {
-    SuggestionsModule.applyAllSuggestions(applySuggestion);
-  });
-  $("loadFromImageBtn").addEventListener("click", () => {
-    describeInputTerms(true); // Overwrite when user explicitly clicks
-  });
+  // Add null checks for all event listeners
+  const resetBtn = $("resetBtn");
+  if (resetBtn) resetBtn.addEventListener("click", resetRun);
+  
+  const runBtn = $("runBtn");
+  if (runBtn) runBtn.addEventListener("click", runIteration);
+  
+  const maskSelect = $("maskSelect");
+  if (maskSelect) {
+    maskSelect.addEventListener("change", (e) => {
+      currentMask = e.target.value;
+      loadMaskData();
+    });
+  }
+  
+  const savePromptsBtn = $("savePromptsBtn");
+  if (savePromptsBtn) savePromptsBtn.addEventListener("click", savePrompts);
+  
+  const saveAsDefaultBtn = $("saveAsDefaultBtn");
+  if (saveAsDefaultBtn) saveAsDefaultBtn.addEventListener("click", saveAsProjectDefault);
+  
+  const saveSettingsBtn = $("saveSettingsBtn");
+  if (saveSettingsBtn) saveSettingsBtn.addEventListener("click", saveSettings);
+  
+  const generateSuggestionBtn = $("generateSuggestionBtn");
+  if (generateSuggestionBtn) generateSuggestionBtn.addEventListener("click", generateSuggestion);
+  
+  const applySuggestionBtn = $("applySuggestionBtn");
+  if (applySuggestionBtn) {
+    applySuggestionBtn.addEventListener("click", () => {
+      SuggestionsModule.applyAllSuggestions(applySuggestion);
+    });
+  }
+  
+  const loadFromImageBtn = $("loadFromImageBtn");
+  if (loadFromImageBtn) {
+    loadFromImageBtn.addEventListener("click", () => {
+      describeInputTerms(true); // Overwrite when user explicitly clicks
+    });
+  }
   
   // Expose validation function globally so prompts module can call it
   window.runValidation = runValidation;
