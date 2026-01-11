@@ -1,8 +1,6 @@
 /* global window */
 // Module for handling AIVis suggestions
 
-const project = window.__LIVE_PROJECT__;
-
 let currentSuggestions = null;
 
 // Render suggestions panel
@@ -124,6 +122,7 @@ async function generateSuggestions(runId) {
   }
   
   try {
+    const project = window.__LIVE_PROJECT__;
     const res = await fetch(`/api/project/${project}/run/${runId}/suggest_prompts`);
     const data = await res.json();
     
