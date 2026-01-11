@@ -207,52 +207,75 @@ function renderLatest(state, iterations) {
   const submitBtn = $("submitFeedbackBtn");
   const banner = $("turnBanner");
   const spinner = $("spinnerOverlay");
-  const feedbackPanel = $("feedbackPanel");
   const describeBtn = $("describeBtn");
   const latestMetaText = $("latestMetaText");
+
+  // Safely handle elements that might not exist
+  if (!submitBtn || !banner || !spinner) {
+    return; // Elements not ready yet
+  }
 
   if (latest) {
     const n = latest.iteration_number;
     currentIteration = n;
-    $("latestImg").src = `/api/project/${project}/run/${runId}/image/iteration_${n}.png`;
+    const latestImg = $("latestImg");
+    if (latestImg) {
+      latestImg.src = `/api/project/${project}/run/${runId}/image/iteration_${n}.png`;
+    }
     const score = (latest.evaluation || {}).overall_score;
-    latestMetaText.textContent = `Iteration ${n} | score: ${score}`;
-    describeBtn.disabled = false;
+    if (latestMetaText) {
+      latestMetaText.textContent = `Iteration ${n} | score: ${score}`;
+    }
+    if (describeBtn) {
+      describeBtn.disabled = false;
+    }
   } else {
     currentIteration = null;
-    describeBtn.disabled = true;
+    if (describeBtn) {
+      describeBtn.disabled = true;
+    }
   }
 
   if (state.status === "waiting") {
     submitBtn.disabled = false;
-    $("feedbackHint").textContent = `Waiting for your feedback for iteration ${state.expected_feedback_for_iteration}.`;
-    banner.classList.remove("hidden");
-    spinner.classList.add("hidden");
-    feedbackPanel.classList.add("attention");
+    const feedbackHint = $("feedbackHint");
+    if (feedbackHint) {
+      feedbackHint.textContent = `Waiting for your feedback for iteration ${state.expected_feedback_for_iteration}.`;
+    }
+    banner.classList.remove("is-hidden");
+    spinner.classList.add("is-hidden");
   } else if (state.status === "running" || state.status === "starting") {
     submitBtn.disabled = true;
-    $("feedbackHint").textContent = "Generating... (feedback will unlock between iterations)";
-    banner.classList.add("hidden");
-    spinner.classList.remove("hidden");
-    feedbackPanel.classList.remove("attention");
+    const feedbackHint = $("feedbackHint");
+    if (feedbackHint) {
+      feedbackHint.textContent = "Generating... (feedback will unlock between iterations)";
+    }
+    banner.classList.add("is-hidden");
+    spinner.classList.remove("is-hidden");
   } else if (state.status === "finished") {
     submitBtn.disabled = true;
-    $("feedbackHint").textContent = state.message || "Finished";
-    banner.classList.add("hidden");
-    spinner.classList.add("hidden");
-    feedbackPanel.classList.remove("attention");
+    const feedbackHint = $("feedbackHint");
+    if (feedbackHint) {
+      feedbackHint.textContent = state.message || "Finished";
+    }
+    banner.classList.add("is-hidden");
+    spinner.classList.add("is-hidden");
   } else if (state.status === "error") {
     submitBtn.disabled = true;
-    $("feedbackHint").textContent = `Error: ${state.message || "unknown"}`;
-    banner.classList.add("hidden");
-    spinner.classList.add("hidden");
-    feedbackPanel.classList.remove("attention");
+    const feedbackHint = $("feedbackHint");
+    if (feedbackHint) {
+      feedbackHint.textContent = `Error: ${state.message || "unknown"}`;
+    }
+    banner.classList.add("is-hidden");
+    spinner.classList.add("is-hidden");
   } else {
     submitBtn.disabled = true;
-    $("feedbackHint").textContent = "";
-    banner.classList.add("hidden");
-    spinner.classList.add("hidden");
-    feedbackPanel.classList.remove("attention");
+    const feedbackHint = $("feedbackHint");
+    if (feedbackHint) {
+      feedbackHint.textContent = "";
+    }
+    banner.classList.add("is-hidden");
+    spinner.classList.add("is-hidden");
   }
 
   setStatus(`${state.status} | iter ${state.current_iteration} | best ${state.best_score} (iter ${state.best_iteration || "-"})`);
