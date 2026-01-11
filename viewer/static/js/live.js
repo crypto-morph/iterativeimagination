@@ -210,10 +210,8 @@ async function loadMasks() {
       currentMask = "global";
     }
     
-    // Load data for selected mask (but wait a bit for DOM to be ready)
-    setTimeout(() => {
-      loadMaskData();
-    }, 100);
+    // Load data for selected mask immediately (with retry logic inside)
+    await loadMaskData();
   } catch (e) {
     console.error("Failed to load masks:", e);
   }
@@ -223,26 +221,49 @@ async function loadMasks() {
 async function loadMaskData() {
   if (!currentMask) {
     console.log("No mask selected, skipping loadMaskData");
-    return;
+    // Still try to load global prompts
+    currentMask = "global";
   }
   
   console.log(`Loading data for mask: ${currentMask}`);
   
-  // Load prompts
-  try {
-    const res = await fetch(`/api/project/${project}/mask/${currentMask}/prompts`);
-    const data = await res.json();
-    if (res.ok) {
-      const posEl = $("inputPositivePrompt");
-      const negEl = $("inputNegativePrompt");
-      if (posEl) posEl.value = data.positive || "";
-      if (negEl) negEl.value = data.negative || "";
-      console.log(`Loaded prompts for ${currentMask}:`, data);
-    } else {
-      console.error("Failed to load prompts:", data.error);
+  // Load prompts - retry if elements don't exist yet
+  let retries = 0;
+  const maxRetries = 5;
+  while (retries < maxRetries) {
+    const posEl = $("inputPositivePrompt");
+    const negEl = $("inputNegativePrompt");
+    
+    if (!posEl || !negEl) {
+      if (retries < maxRetries - 1) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        retries++;
+        continue;
+      } else {
+        console.error("Input prompt elements not found after retries");
+        return;
+      }
     }
-  } catch (e) {
-    console.error("Failed to load mask prompts:", e);
+    
+    try {
+      const res = await fetch(`/api/project/${project}/mask/${currentMask}/prompts`);
+      const data = await res.json();
+      if (res.ok) {
+        posEl.value = data.positive || "";
+        negEl.value = data.negative || "";
+        console.log(`Loaded prompts for ${currentMask}:`, data);
+      } else {
+        console.error("Failed to load prompts:", data.error);
+        // Set empty if API fails
+        posEl.value = "";
+        negEl.value = "";
+      }
+    } catch (e) {
+      console.error("Failed to load mask prompts:", e);
+      posEl.value = "";
+      negEl.value = "";
+    }
+    break;
   }
   
   // Load terms
@@ -822,10 +843,15 @@ async function init() {
   wireUI();
   
   // Wait a moment for DOM to be fully ready
-  await new Promise(resolve => setTimeout(resolve, 100));
+  await new Promise(resolve => setTimeout(resolve, 200));
   
   // Load masks (this will set currentMask and call loadMaskData)
   await loadMasks();
+  
+  // Ensure mask data is loaded (in case loadMasks didn't trigger it)
+  if (currentMask) {
+    await loadMaskData();
+  }
   
   // Load other data
   await loadSettings();
