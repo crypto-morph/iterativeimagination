@@ -40,6 +40,30 @@
             opacity: 0.5;
             text-decoration: line-through;
         }
+        .term-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.25rem 0;
+            border-bottom: 1px solid #eee;
+        }
+        .term-item:last-child {
+            border-bottom: none;
+        }
+        .term-text {
+            flex: 1;
+            word-break: break-word;
+        }
+        .term-list {
+            background: #f8f9fa;
+            padding: 0.5rem;
+            border-radius: 4px;
+        }
+        .suggestion-tag {
+            margin: 0.25rem;
+            display: inline-flex;
+            align-items: center;
+        }
         .image-description {
             max-height: 150px;
             overflow-y: auto;
@@ -168,48 +192,53 @@
                 <!-- Prompts Section -->
                 <div class="box">
                     <h3 class="title is-5">Prompts</h3>
-                    <div class="tabs is-boxed">
-                        <ul>
-                            <li class="is-active" data-tab="input-prompts"><a>Input Prompts</a></li>
-                            <li data-tab="iteration-prompts"><a>Iteration Prompts</a></li>
-                        </ul>
-                    </div>
                     
-                    <div id="input-prompts" class="tab-content">
-                        <div class="field">
-                            <label class="label is-size-7">Positive (from rules.yaml)</label>
-                            <div class="control">
-                                <textarea id="inputPositivePrompt" class="textarea code-textarea" readonly style="min-height:100px;"></textarea>
+                    <!-- Positive Terms -->
+                    <div class="field">
+                        <label class="label is-size-7">Positive Terms</label>
+                        <div class="control">
+                            <div class="field has-addons">
+                                <div class="control is-expanded">
+                                    <input id="addPositiveTerm" class="input is-small" type="text" placeholder="Add term (press Enter)">
+                                </div>
                             </div>
                         </div>
-                        <div class="field">
-                            <label class="label is-size-7">Negative (from rules.yaml)</label>
-                            <div class="control">
-                                <textarea id="inputNegativePrompt" class="textarea code-textarea" readonly style="min-height:100px;"></textarea>
-                            </div>
+                        <div class="control mt-2">
+                            <ol id="positiveTermsList" class="term-list" style="list-style: decimal; padding-left: 1.5rem; max-height: 200px; overflow-y: auto;">
+                                <li class="has-text-grey is-size-7">No terms</li>
+                            </ol>
                         </div>
                     </div>
                     
-                    <div id="iteration-prompts" class="tab-content is-hidden">
-                        <div class="field">
-                            <label class="label is-size-7">Positive (editable)</label>
-                            <div class="control">
-                                <textarea id="iterationPositivePrompt" class="textarea code-textarea" style="min-height:100px;"></textarea>
+                    <!-- Negative Terms -->
+                    <div class="field">
+                        <label class="label is-size-7">Negative Terms</label>
+                        <div class="control">
+                            <div class="field has-addons">
+                                <div class="control is-expanded">
+                                    <input id="addNegativeTerm" class="input is-small" type="text" placeholder="Add term (press Enter)">
+                                </div>
                             </div>
                         </div>
-                        <div class="field">
-                            <label class="label is-size-7">Negative (editable)</label>
-                            <div class="control">
-                                <textarea id="iterationNegativePrompt" class="textarea code-textarea" style="min-height:100px;"></textarea>
-                            </div>
+                        <div class="control mt-2">
+                            <ol id="negativeTermsList" class="term-list" style="list-style: decimal; padding-left: 1.5rem; max-height: 200px; overflow-y: auto;">
+                                <li class="has-text-grey is-size-7">No terms</li>
+                            </ol>
                         </div>
-                        <div class="field is-grouped">
-                            <div class="control">
-                                <button id="savePromptsBtn" class="button is-primary">Save Prompts</button>
-                            </div>
-                            <div class="control">
-                                <span id="promptsStatus" class="has-text-grey is-size-7"></span>
-                            </div>
+                    </div>
+                    
+                    <!-- Validation Issues -->
+                    <div id="validationIssues" class="notification is-light mt-3" style="display: none;"></div>
+                    
+                    <div class="field is-grouped mt-3">
+                        <div class="control">
+                            <button id="savePromptsBtn" class="button is-primary">Save Prompts</button>
+                        </div>
+                        <div class="control">
+                            <button id="saveAsDefaultBtn" class="button is-warning">Save as Project Default</button>
+                        </div>
+                        <div class="control">
+                            <span id="promptsStatus" class="has-text-grey is-size-7"></span>
                         </div>
                     </div>
                 </div>
@@ -231,24 +260,24 @@
                             </div>
                         </div>
                     </div>
-                    <div id="suggestionBox" class="is-hidden">
+                    <div id="suggestionsPanel" class="is-hidden">
                         <div class="field">
-                            <label class="label is-size-7">Suggested Positive Prompt (changes highlighted)</label>
-                            <div class="control">
-                                <div id="suggestedPositivePrompt" class="textarea code-textarea" style="min-height:100px; white-space: pre-wrap; background: #f8f9fa;" contenteditable="true"></div>
+                            <label class="label is-size-7">Positive Suggestions</label>
+                            <div id="positiveSuggestions" class="box" style="padding: 0.75rem;">
+                                <!-- Suggestions will be rendered here -->
                             </div>
                         </div>
                         <div class="field">
-                            <label class="label is-size-7">Suggested Negative Prompt (changes highlighted)</label>
-                            <div class="control">
-                                <div id="suggestedNegativePrompt" class="textarea code-textarea" style="min-height:100px; white-space: pre-wrap; background: #f8f9fa;" contenteditable="true"></div>
+                            <label class="label is-size-7">Negative Suggestions</label>
+                            <div id="negativeSuggestions" class="box" style="padding: 0.75rem;">
+                                <!-- Suggestions will be rendered here -->
                             </div>
                         </div>
                         <div class="field">
                             <div class="control">
                                 <button id="applySuggestionBtn" class="button is-success">
                                     <span class="icon"><i class="fas fa-check"></i></span>
-                                    <span>Apply to Iteration Prompts</span>
+                                    <span>Apply Selected Suggestions</span>
                                 </button>
                             </div>
                         </div>
@@ -286,38 +315,46 @@
 
                 <!-- Mask-Bound Terms -->
                 <div class="box">
-                    <div class="level">
-                        <div class="level-left">
-                            <div class="level-item">
-                                <h3 class="title is-5">Mask Terms</h3>
-                            </div>
-                        </div>
-                        <div class="level-right">
-                            <div class="level-item">
-                                <button id="addTermBtn" class="button is-small is-light">
-                                    <span class="icon"><i class="fas fa-plus"></i></span>
-                                    <span>Add</span>
-                                </button>
-                            </div>
-                        </div>
-                    </div>
+                    <h3 class="title is-5">Mask Terms</h3>
+                    <p class="is-size-7 has-text-grey mb-3">Terms that apply only to the masked area</p>
                     
                     <div class="tabs is-small">
                         <ul>
-                            <li class="is-active" data-term-tab="must_include"><a>Must Include</a></li>
-                            <li data-term-tab="ban_terms"><a>Ban Terms</a></li>
-                            <li data-term-tab="avoid_terms"><a>Avoid Terms</a></li>
+                            <li class="is-active" data-term-tab="mustIncludeTerms"><a>Must Include</a></li>
+                            <li data-term-tab="banTerms"><a>Ban Terms</a></li>
+                            <li data-term-tab="avoidTerms"><a>Avoid Terms</a></li>
                         </ul>
                     </div>
                     
-                    <div id="must_include" class="term-tab-content">
-                        <div id="mustIncludeTerms" class="tags"></div>
+                    <div id="mustIncludeTerms" class="term-tab-content">
+                        <div class="field">
+                            <div class="control">
+                                <input id="addMustIncludeTerm" class="input is-small" type="text" placeholder="Add term (press Enter)">
+                            </div>
+                        </div>
+                        <ol id="mustIncludeTermsList" class="term-list" style="list-style: decimal; padding-left: 1.5rem; max-height: 150px; overflow-y: auto;">
+                            <li class="has-text-grey is-size-7">No terms</li>
+                        </ol>
                     </div>
-                    <div id="ban_terms" class="term-tab-content is-hidden">
-                        <div id="banTerms" class="tags"></div>
+                    <div id="banTerms" class="term-tab-content is-hidden">
+                        <div class="field">
+                            <div class="control">
+                                <input id="addBanTerm" class="input is-small" type="text" placeholder="Add term (press Enter)">
+                            </div>
+                        </div>
+                        <ol id="banTermsList" class="term-list" style="list-style: decimal; padding-left: 1.5rem; max-height: 150px; overflow-y: auto;">
+                            <li class="has-text-grey is-size-7">No terms</li>
+                        </ol>
                     </div>
-                    <div id="avoid_terms" class="term-tab-content is-hidden">
-                        <div id="avoidTerms" class="tags"></div>
+                    <div id="avoidTerms" class="term-tab-content is-hidden">
+                        <div class="field">
+                            <div class="control">
+                                <input id="addAvoidTerm" class="input is-small" type="text" placeholder="Add term (press Enter)">
+                            </div>
+                        </div>
+                        <ol id="avoidTermsList" class="term-list" style="list-style: decimal; padding-left: 1.5rem; max-height: 150px; overflow-y: auto;">
+                            <li class="has-text-grey is-size-7">No terms</li>
+                        </ol>
                     </div>
                 </div>
             </div>
@@ -327,6 +364,9 @@
     <script>
         window.__LIVE_PROJECT__ = "{{ project_name }}";
     </script>
+    <script src="{{ url_for('static', filename='js/live/prompts.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/live/validation.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/live/suggestions.js') }}"></script>
     <script src="{{ url_for('static', filename='js/live.js') }}"></script>
 </body>
 </html>
