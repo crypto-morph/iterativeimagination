@@ -111,8 +111,10 @@ async function loadMasks() {
       currentMask = "global";
     }
     
-    // Load data for selected mask
-    await loadMaskData();
+    // Load data for selected mask (but wait a bit for DOM to be ready)
+    setTimeout(() => {
+      loadMaskData();
+    }, 100);
   } catch (e) {
     console.error("Failed to load masks:", e);
   }
@@ -120,15 +122,25 @@ async function loadMasks() {
 
 // Load mask-specific data (prompts, terms)
 async function loadMaskData() {
-  if (!currentMask) return;
+  if (!currentMask) {
+    console.log("No mask selected, skipping loadMaskData");
+    return;
+  }
+  
+  console.log(`Loading data for mask: ${currentMask}`);
   
   // Load prompts
   try {
     const res = await fetch(`/api/project/${project}/mask/${currentMask}/prompts`);
     const data = await res.json();
     if (res.ok) {
-      $("inputPositivePrompt").value = data.positive || "";
-      $("inputNegativePrompt").value = data.negative || "";
+      const posEl = $("inputPositivePrompt");
+      const negEl = $("inputNegativePrompt");
+      if (posEl) posEl.value = data.positive || "";
+      if (negEl) negEl.value = data.negative || "";
+      console.log(`Loaded prompts for ${currentMask}:`, data);
+    } else {
+      console.error("Failed to load prompts:", data.error);
     }
   } catch (e) {
     console.error("Failed to load mask prompts:", e);
@@ -144,7 +156,10 @@ async function loadMaskData() {
         ban_terms: data.ban_terms || [],
         avoid_terms: data.avoid_terms || []
       };
+      console.log(`Loaded terms for ${currentMask}:`, currentTerms);
       renderTerms();
+    } else {
+      console.error("Failed to load terms:", data.error);
     }
   } catch (e) {
     console.error("Failed to load mask terms:", e);
@@ -568,11 +583,28 @@ function wireUI() {
 
 // Initialize
 async function init() {
+  console.log("Initializing live page...");
+  
+  // Wire UI first so event handlers are ready
+  wireUI();
+  
+  // Wait a moment for DOM to be fully ready
+  await new Promise(resolve => setTimeout(resolve, 100));
+  
+  // Load masks (this will set currentMask and call loadMaskData)
   await loadMasks();
+  
+  // Load other data
   await loadSettings();
   await loadIterationPrompts();
   await describeInput();
-  wireUI();
+  
+  console.log("Initialization complete");
 }
 
-init();
+// Start initialization when DOM is ready
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}
