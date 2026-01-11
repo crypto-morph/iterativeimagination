@@ -666,16 +666,35 @@ async function runIteration() {
   // Save prompts first
   await savePrompts();
   
+  // Save mask selection to working/AIGen.yaml
+  try {
+    const settingsRes = await fetch(`/api/project/${project}/working/aigen/settings`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        masking: {
+          enabled: currentMask !== "global",
+          active_mask: currentMask !== "global" ? currentMask : null
+        }
+      })
+    });
+    if (!settingsRes.ok) {
+      console.warn("Failed to save mask selection:", await settingsRes.json());
+    }
+  } catch (e) {
+    console.warn("Failed to save mask selection:", e);
+  }
+  
   // Start/continue run
   const maxIter = parseInt($("maxIterInput").value || "20", 10);
   
-  setStatus("Starting run...");
+  setStatus(`Starting run with mask: ${currentMask}...`);
   
   try {
     const res = await fetch(`/api/project/${project}/live/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reset: false, max_iterations: maxIter })
+      body: JSON.stringify({ reset: false, max_iterations: maxIter, mask_name: currentMask })
     });
     const data = await res.json();
     if (!res.ok) {

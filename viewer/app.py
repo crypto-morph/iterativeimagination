@@ -2400,6 +2400,7 @@ def live_start(project_name: str):
     payload = request.get_json(silent=True) or {}
     max_iterations = int(payload.get("max_iterations") or 20)
     reset = bool(payload.get("reset"))
+    mask_name = payload.get("mask_name") or "global"
 
     # Import here to avoid slowing initial page load.
     from live_runner import LiveRunController
@@ -2417,6 +2418,26 @@ def live_start(project_name: str):
             if ckpt.exists():
                 ckpt.unlink()
         except Exception:
+            pass
+
+    # Ensure mask is set in working/AIGen.yaml before starting
+    if mask_name and mask_name != "global":
+        try:
+            import yaml
+            working_aigen = PROJECTS_ROOT / project_name / "working" / "AIGen.yaml"
+            aigen_config = {}
+            if working_aigen.exists():
+                with open(working_aigen, 'r', encoding='utf-8') as f:
+                    aigen_config = yaml.safe_load(f) or {}
+            
+            aigen_config.setdefault("masking", {})
+            aigen_config["masking"]["enabled"] = True
+            aigen_config["masking"]["active_mask"] = mask_name
+            
+            with open(working_aigen, 'w', encoding='utf-8') as f:
+                yaml.dump(aigen_config, f, default_flow_style=False, sort_keys=False)
+        except Exception as e:
+            # Non-fatal - continue even if mask setting fails
             pass
 
     run_id = _make_run_id()
