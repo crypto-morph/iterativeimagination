@@ -1592,72 +1592,77 @@ def main():
         parser.print_help()
         sys.exit(1)
     
+    # Handle --reset BEFORE creating IterativeImagination to avoid stale input_image_path
+    if args.reset:
+        from src.project_manager import ProjectManager
+        temp_project = ProjectManager(project_name)
+        
+        # Remove checkpoint
+        chk = temp_project.get_checkpoint_path()
+        try:
+            if chk.exists():
+                chk.unlink()
+                print(f"Reset: removed {chk}")
+        except Exception as e:
+            print(f"Warning: failed to remove checkpoint {chk}: {e}", file=sys.stderr)
+
+        # Archive any legacy flat iteration_* files into a timestamped run folder so old runs stay tidy.
+        try:
+            legacy_dir = temp_project.project_root / "working"
+            legacy_files = list(legacy_dir.glob("iteration_*.*"))
+            if legacy_files:
+                run_id = temp_project.create_run_id()
+                temp_project.ensure_run_directories(run_id)
+                run_root = temp_project.get_run_root(run_id)
+
+                def _dest_for(p: Path) -> Path:
+                    name = p.name
+                    if name.endswith(".png"):
+                        return run_root / "images" / name
+                    if name.endswith("_questions.json"):
+                        return run_root / "questions" / name
+                    if name.endswith("_evaluation.json"):
+                        return run_root / "evaluation" / name
+                    if name.endswith("_comparison.json"):
+                        return run_root / "comparison" / name
+                    if name.endswith("_metadata.json"):
+                        return run_root / "metadata" / name
+                    return run_root / name
+
+                for p in legacy_files:
+                    dest = _dest_for(p)
+                    p.rename(dest)
+                print(f"Reset: archived {len(legacy_files)} legacy iteration files into {run_root}")
+        except Exception as e:
+            print(f"Warning: failed to archive legacy iteration files: {e}", file=sys.stderr)
+
+        # Reset working/AIGen.yaml to match config/AIGen.yaml if present, otherwise rely on defaults loader.
+        working_aigen = temp_project.project_root / "working" / "AIGen.yaml"
+        config_aigen = temp_project.project_root / "config" / "AIGen.yaml"
+        try:
+            if config_aigen.exists():
+                import shutil as _shutil
+                _shutil.copy2(config_aigen, working_aigen)
+                print(f"Reset: restored {working_aigen} from {config_aigen}")
+            else:
+                # Ensure loader will rebuild working/AIGen.yaml from defaults on next run.
+                if working_aigen.exists():
+                    working_aigen.unlink()
+                    print(f"Reset: removed {working_aigen} (will be recreated from defaults)")
+        except Exception as e:
+            print(f"Warning: failed to reset working AIGen.yaml: {e}", file=sys.stderr)
+
+        # Remove progress.png so the run starts from the original input.png
+        progress_path = temp_project.project_root / "input" / "progress.png"
+        try:
+            if progress_path.exists():
+                progress_path.unlink()
+                print(f"Reset: removed {progress_path} (will start from original input.png)")
+        except Exception as e:
+            print(f"Warning: failed to remove progress.png: {e}", file=sys.stderr)
+
     try:
         app = IterativeImagination(project_name, verbose=args.verbose)
-        if args.reset:
-            # Remove checkpoint and reset working AIGen.yaml back to project config (or defaults via loader).
-            chk = app.project.get_checkpoint_path()
-            try:
-                if chk.exists():
-                    chk.unlink()
-                    print(f"Reset: removed {chk}")
-            except Exception as e:
-                print(f"Warning: failed to remove checkpoint {chk}: {e}", file=sys.stderr)
-
-            # Archive any legacy flat iteration_* files into a timestamped run folder so old runs stay tidy.
-            try:
-                legacy_dir = app.project.project_root / "working"
-                legacy_files = list(legacy_dir.glob("iteration_*.*"))
-                if legacy_files:
-                    run_id = app.project.create_run_id()
-                    app.project.ensure_run_directories(run_id)
-                    run_root = app.project.get_run_root(run_id)
-
-                    def _dest_for(p: Path) -> Path:
-                        name = p.name
-                        if name.endswith(".png"):
-                            return run_root / "images" / name
-                        if name.endswith("_questions.json"):
-                            return run_root / "questions" / name
-                        if name.endswith("_evaluation.json"):
-                            return run_root / "evaluation" / name
-                        if name.endswith("_comparison.json"):
-                            return run_root / "comparison" / name
-                        if name.endswith("_metadata.json"):
-                            return run_root / "metadata" / name
-                        return run_root / name
-
-                    for p in legacy_files:
-                        dest = _dest_for(p)
-                        p.rename(dest)
-                    print(f"Reset: archived {len(legacy_files)} legacy iteration files into {run_root}")
-            except Exception as e:
-                print(f"Warning: failed to archive legacy iteration files: {e}", file=sys.stderr)
-
-            # Reset working/AIGen.yaml to match config/AIGen.yaml if present, otherwise rely on defaults loader.
-            working_aigen = app.project.project_root / "working" / "AIGen.yaml"
-            config_aigen = app.project.project_root / "config" / "AIGen.yaml"
-            try:
-                if config_aigen.exists():
-                    import shutil as _shutil
-                    _shutil.copy2(config_aigen, working_aigen)
-                    print(f"Reset: restored {working_aigen} from {config_aigen}")
-                else:
-                    # Ensure loader will rebuild working/AIGen.yaml from defaults on next run.
-                    if working_aigen.exists():
-                        working_aigen.unlink()
-                        print(f"Reset: removed {working_aigen} (will be recreated from defaults)")
-            except Exception as e:
-                print(f"Warning: failed to reset working AIGen.yaml: {e}", file=sys.stderr)
-
-            # Remove progress.png so the run starts from the original input.png
-            progress_path = app.project.project_root / "input" / "progress.png"
-            try:
-                if progress_path.exists():
-                    progress_path.unlink()
-                    print(f"Reset: removed {progress_path} (will start from original input.png)")
-            except Exception as e:
-                print(f"Warning: failed to remove progress.png: {e}", file=sys.stderr)
 
             # Note: we deliberately do NOT delete iteration_*.png/json so you keep history.
             # If you want a totally clean slate, delete projects/{project}/working/iteration_* manually.
