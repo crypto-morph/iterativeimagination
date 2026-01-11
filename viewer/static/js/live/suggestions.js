@@ -216,6 +216,19 @@ function escapeHtml(s) {
     .replaceAll("'", "&#039;");
 }
 
+// Escape HTML helper (if not already defined)
+if (typeof escapeHtml === 'undefined') {
+  function escapeHtml(text) {
+    if (!text) return '';
+    return String(text)
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+}
+
 // Export
 window.SuggestionsModule = {
   renderSuggestions,
