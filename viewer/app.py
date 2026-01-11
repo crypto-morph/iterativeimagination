@@ -634,6 +634,97 @@ def suggest_prompts(project_name: str, run_id: str):
         positive_suggestions = _compare_term_lists(current_positive_terms, suggested_positive_terms)
         negative_suggestions = _compare_term_lists(current_negative_terms, suggested_negative_terms)
         
+        # Get mask term suggestions if mask_name is provided
+        mask_suggestions = None
+        if mask_name and mask_name != "global":
+            try:
+                # Load current mask terms
+                mask_terms_res = get_mask_terms(project_name, mask_name)
+                if mask_terms_res[1] == 200:
+                    current_mask_terms = mask_terms_res[0].get_json()
+                    current_must_include = current_mask_terms.get("must_include", [])
+                    current_ban_terms = current_mask_terms.get("ban_terms", [])
+                    current_avoid_terms = current_mask_terms.get("avoid_terms", [])
+                    
+                    # Get active criteria for this mask
+                    masking = rules_obj.get("masking") or {}
+                    masks = masking.get("masks") or []
+                    active_fields = []
+                    for m in masks:
+                        if isinstance(m, dict) and str(m.get("name") or "") == mask_name:
+                            ac = m.get("active_criteria") or []
+                            if isinstance(ac, list):
+                                active_fields = [str(x).strip() for x in ac if str(x).strip()]
+                            break
+                    
+                    # Build active criteria text
+                    active_criteria_text = ""
+                    for crit in criteria_defs:
+                        if not isinstance(crit, dict):
+                            continue
+                        field = str(crit.get("field") or "")
+                        if field not in active_fields:
+                            continue
+                        q = crit.get("question", "")
+                        intent = crit.get("intent", "preserve")
+                        active_criteria_text += f"- {field}: {q} (intent={intent})\n"
+                    
+                    # Get mask description (if available)
+                    mask_description = f"Mask '{mask_name}'"
+                    for m in masks:
+                        if isinstance(m, dict) and str(m.get("name") or "") == mask_name:
+                            desc = m.get("description")
+                            if desc:
+                                mask_description = str(desc)
+                            break
+                    
+                    # Call AIVis to suggest mask terms
+                    mask_prompt_template = aivis.prompts.get('suggest_mask_terms', '')
+                    if mask_prompt_template:
+                        mask_prompt = mask_prompt_template.format(
+                            mask_name=mask_name,
+                            mask_description=mask_description,
+                            latest_iteration_description=latest_iteration_desc or "No description available",
+                            current_must_include=", ".join(current_must_include) or "None",
+                            current_ban_terms=", ".join(current_ban_terms) or "None",
+                            current_avoid_terms=", ".join(current_avoid_terms) or "None",
+                            overall_score=evaluation.get('overall_score', 0),
+                            failed_criteria=", ".join(failed_criteria) or "None",
+                            active_criteria_text=active_criteria_text or "No active criteria"
+                        )
+                        
+                        payload = {
+                            "model": aivis.model,
+                            "prompt": mask_prompt,
+                            "stream": False,
+                            "format": "json"
+                        }
+                        
+                        try:
+                            parsed, _ = aivis._make_request_with_retry(payload, parse_json=True)
+                            suggested_must_include = parsed.get('must_include', [])
+                            suggested_ban_terms = parsed.get('ban_terms', [])
+                            suggested_avoid_terms = parsed.get('avoid_terms', [])
+                            
+                            # Compare to get suggestions
+                            mask_suggestions = {
+                                "must_include": _compare_term_lists(current_must_include, suggested_must_include),
+                                "ban_terms": _compare_term_lists(current_ban_terms, suggested_ban_terms),
+                                "avoid_terms": _compare_term_lists(current_avoid_terms, suggested_avoid_terms),
+                                "current_must_include": current_must_include,
+                                "current_ban_terms": current_ban_terms,
+                                "current_avoid_terms": current_avoid_terms,
+                                "suggested_must_include": suggested_must_include,
+                                "suggested_ban_terms": suggested_ban_terms,
+                                "suggested_avoid_terms": suggested_avoid_terms
+                            }
+                        except Exception as e:
+                            # If mask suggestions fail, continue without them
+                            pass
+            except Exception as e:
+                # If mask suggestions fail, continue without them
+                pass
+        
         return jsonify({
             "ok": True,
             "current_positive_terms": current_positive_terms,
@@ -643,8 +734,10 @@ def suggest_prompts(project_name: str, run_id: str):
             "positive_suggestions": positive_suggestions,
             "negative_suggestions": negative_suggestions,
             "diff_info": diff_info,
-            "latest_iteration_description": latest_iteration_desc,  # Add the description
-            "iteration_number": iteration_num
+            "latest_iteration_description": latest_iteration_desc,
+            "iteration_number": iteration_num,
+            "mask_suggestions": mask_suggestions,
+            "mask_name": mask_name
         }), 200
     except Exception as e:
         return jsonify({"error": f"Failed to generate suggestions: {e}"}), 500
