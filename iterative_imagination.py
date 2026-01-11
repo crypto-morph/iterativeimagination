@@ -1198,16 +1198,49 @@ class IterativeImagination:
                 )
             # Change failures with preserve OK: allow a bit more freedom, but keep within caps.
             max_strength = max(_strength_value(criteria_by_field[f].get('edit_strength')) for f in failed_change)
-            # Bigger step size here to actually make progress on stubborn edits (e.g. removing garments).
-            delta = 0.06 + 0.02 * max_strength
+            
+            # Check how many consecutive iterations this change goal has been failing
+            # This allows us to be more aggressive if we've been stuck for a while
+            iteration_num = iteration_result.get('iteration', 1)
+            consecutive_failures = 0
+            if iteration_num > 1:
+                # Try to count consecutive failures by checking previous iterations
+                # For now, use iteration number as a proxy (if we're on iteration 3+, we've failed at least 2 times)
+                consecutive_failures = max(0, iteration_num - 1)
+            
+            # Base step size - bigger for stubborn edits (e.g. removing garments).
+            base_delta = 0.06 + 0.02 * max_strength
+            base_cfg_delta = 0.5 + 0.5 * max_strength
+            
+            # If we've failed multiple times, be more aggressive (but cap the multiplier)
+            # After 2+ failures, increase step size by up to 2x
+            failure_multiplier = min(2.0, 1.0 + (consecutive_failures * 0.3))
+            delta = base_delta * failure_multiplier
+            cfg_delta = base_cfg_delta * failure_multiplier
+            
+            # If we're already at high values and still failing, try a different approach:
+            # Instead of just increasing, we could try a "jump" to a different range
+            # For now, we'll just be more aggressive with increments
+            if cur_d >= 0.85 and cur_cfg >= 12.0:
+                # We're already very high - maybe the issue is seed variance or prompt quality
+                # Try a bigger jump to break out of the local minimum
+                delta = max(delta, 0.05)  # At least 0.05 increment even if multiplier is small
+                cfg_delta = max(cfg_delta, 1.5)  # At least 1.5 cfg increment
+                self.logger.warning(
+                    f"High denoise/cfg ({cur_d:.2f}/{cur_cfg:.1f}) but change still failing. "
+                    f"Trying larger increments (Δdenoise={delta:.3f}, Δcfg={cfg_delta:.1f}) to break out of local minimum."
+                )
+            
             # If change is failing and preserve is OK, we should steadily increase denoise until the change lands,
             # while staying within the project caps.
             params["denoise"] = min(denoise_max, max(denoise_min, cur_d + delta))
 
-            cfg_delta = 0.5 + 0.5 * max_strength
             params["cfg"] = min(cfg_max, max(cfg_min, cur_cfg + cfg_delta))
             self.logger.info(
-                f"Change goals failing ({failed_change}) - increasing denoise to {params['denoise']:.2f}, cfg to {params['cfg']:.1f} (caps: denoise<= {denoise_max:.2f}, cfg<= {cfg_max:.1f})"
+                f"Change goals failing ({failed_change}, {consecutive_failures} consecutive) - "
+                f"increasing denoise to {params['denoise']:.2f} (Δ{delta:.3f}), "
+                f"cfg to {params['cfg']:.1f} (Δ{cfg_delta:.1f}) "
+                f"(caps: denoise<= {denoise_max:.2f}, cfg<= {cfg_max:.1f})"
             )
         elif failed_preserve:
             # Preserve failures (and no change failures): pull closer to original immediately.

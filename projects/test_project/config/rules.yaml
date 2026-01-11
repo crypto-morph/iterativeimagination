@@ -111,6 +111,7 @@ project:
   denoise_max: 0.95
   cfg_max: 25.0  # Increased from 15.0 to allow more aggressive guidance
   improve_prompts: false  # Disable prompt improvement for testing (default: false)
+  batch_size: 1  # Number of images to generate per iteration (default: 1, increase for seed variance testing)
   # Auto-boost denoise/cfg when inpainting (masking) is active
   # These values are applied if the current denoise/cfg are below the thresholds
   inpainting_denoise_min: 0.75  # Minimum denoise when inpainting is active (from successful attempt)
