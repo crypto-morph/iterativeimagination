@@ -156,13 +156,19 @@ class WorkflowManager:
                             continue
                         nxt = _follow_link(inputs.get(key))
                         if nxt:
-                            # For InpaintModelConditioning, continue following the same key
-                            next_follow_key = follow_key if ct == "InpaintModelConditioning" else None
-                            # Recursively collect with the same follow_key to maintain path separation
-                            if next_follow_key:
-                                out |= _collect_textencode_nodes_from(nxt, max_depth - depth - 1, next_follow_key)
+                            # For InpaintModelConditioning, continue following the same key to maintain path separation
+                            # This prevents mixing positive and negative prompts when both paths go through the same node
+                            if ct == "InpaintModelConditioning" and follow_key:
+                                # Recursively collect with the same follow_key to maintain path separation
+                                out |= _collect_textencode_nodes_from(nxt, max_depth - depth - 1, follow_key)
                             else:
-                                stack.append((nxt, depth + 1))
+                                # For other nodes, continue iteratively (or recursively if follow_key is set)
+                                if follow_key:
+                                    # If we have a follow_key but this isn't InpaintModelConditioning, 
+                                    # we can stop following the key and just traverse normally
+                                    out |= _collect_textencode_nodes_from(nxt, max_depth - depth - 1, None)
+                                else:
+                                    stack.append((nxt, depth + 1))
             return out
 
         def _update_prompt_texts(positive_text: str | None, negative_text: str | None) -> None:
