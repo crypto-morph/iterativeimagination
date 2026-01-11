@@ -113,10 +113,10 @@ project:
   improve_prompts: false  # Disable prompt improvement for testing (default: false)
   # Auto-boost denoise/cfg when inpainting (masking) is active
   # These values are applied if the current denoise/cfg are below the thresholds
-  inpainting_denoise_min: 0.85  # Minimum denoise when inpainting is active (default: 0.85)
-  inpainting_cfg_min: 10.0      # Minimum cfg when inpainting is active (default: 10.0)
+  inpainting_denoise_min: 0.75  # Minimum denoise when inpainting is active (from successful attempt)
+  inpainting_cfg_min: 7.5       # Minimum cfg when inpainting is active (from successful attempt)
   inpainting_denoise_threshold: 0.7  # Boost if current denoise < this (default: 0.7)
-  inpainting_cfg_threshold: 9.0      # Boost if current cfg < this (default: 9.0)
+  inpainting_cfg_threshold: 7.0     # Boost if current cfg < this (lowered to allow cfg=7.5 to pass through)
 prompts:
   global:
     negative: ''
