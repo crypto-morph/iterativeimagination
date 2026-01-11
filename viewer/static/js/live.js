@@ -30,43 +30,142 @@ function escapeHtml(s) {
     .replaceAll("'", "&#039;");
 }
 
-// Diff highlighting (GitHub-style)
+// Diff highlighting (GitHub-style) - improved algorithm
 function highlightDiff(oldText, newText) {
-  const oldWords = oldText.split(/(\s+)/);
-  const newWords = newText.split(/(\s+)/);
+  // If texts are identical, just return escaped new text
+  if (oldText === newText) {
+    return `<span class="diff-unchanged">${escapeHtml(newText)}</span>`;
+  }
+  
+  // Split into words (preserving whitespace)
+  const oldWords = oldText.split(/(\s+)/).filter(w => w.length > 0);
+  const newWords = newText.split(/(\s+)/).filter(w => w.length > 0);
+  
+  // Use a simple word-by-word comparison
   const result = [];
   let oldIdx = 0;
   let newIdx = 0;
   
+  // Helper to check if a word is whitespace
+  function isWhitespace(word) {
+    return /^\s+$/.test(word);
+  }
+  
+  // Helper to get word content (without whitespace)
+  function getWordContent(word) {
+    return word.trim().toLowerCase();
+  }
+  
   while (oldIdx < oldWords.length || newIdx < newWords.length) {
+    // Handle end of one array
     if (oldIdx >= oldWords.length) {
-      // Only new words left
-      result.push(`<span class="diff-added">${escapeHtml(newWords[newIdx])}</span>`);
-      newIdx++;
-    } else if (newIdx >= newWords.length) {
-      // Only old words left
-      result.push(`<span class="diff-removed">${escapeHtml(oldWords[oldIdx])}</span>`);
+      // Only new words left - all added
+      while (newIdx < newWords.length) {
+        const word = newWords[newIdx];
+        if (isWhitespace(word)) {
+          result.push(escapeHtml(word));
+        } else {
+          result.push(`<span class="diff-added">${escapeHtml(word)}</span>`);
+        }
+        newIdx++;
+      }
+      break;
+    }
+    
+    if (newIdx >= newWords.length) {
+      // Only old words left - all removed
+      while (oldIdx < oldWords.length) {
+        const word = oldWords[oldIdx];
+        if (isWhitespace(word)) {
+          result.push(escapeHtml(word));
+        } else {
+          result.push(`<span class="diff-removed">${escapeHtml(word)}</span>`);
+        }
+        oldIdx++;
+      }
+      break;
+    }
+    
+    const oldWord = oldWords[oldIdx];
+    const newWord = newWords[newIdx];
+    
+    // Handle whitespace
+    if (isWhitespace(oldWord) && isWhitespace(newWord)) {
+      result.push(escapeHtml(oldWord));
       oldIdx++;
-    } else if (oldWords[oldIdx] === newWords[newIdx]) {
-      // Same word
-      result.push(`<span class="diff-unchanged">${escapeHtml(oldWords[oldIdx])}</span>`);
+      newIdx++;
+      continue;
+    }
+    
+    if (isWhitespace(oldWord)) {
+      result.push(escapeHtml(oldWord));
+      oldIdx++;
+      continue;
+    }
+    
+    if (isWhitespace(newWord)) {
+      result.push(escapeHtml(newWord));
+      newIdx++;
+      continue;
+    }
+    
+    // Compare word content
+    const oldContent = getWordContent(oldWord);
+    const newContent = getWordContent(newWord);
+    
+    if (oldContent === newContent) {
+      // Same word - unchanged
+      result.push(`<span class="diff-unchanged">${escapeHtml(oldWord)}</span>`);
       oldIdx++;
       newIdx++;
     } else {
-      // Different - try to find next match
-      const oldWord = oldWords[oldIdx].trim();
-      const newWord = newWords[newIdx].trim();
+      // Different words - look ahead to see if we can find a match
+      let foundMatch = false;
+      let searchAhead = 0;
+      const maxSearch = 10; // Limit search to avoid O(n²) behavior
       
-      if (oldWord && !newWord) {
-        result.push(`<span class="diff-removed">${escapeHtml(oldWords[oldIdx])}</span>`);
-        oldIdx++;
-      } else if (!oldWord && newWord) {
-        result.push(`<span class="diff-added">${escapeHtml(newWords[newIdx])}</span>`);
-        newIdx++;
-      } else {
-        // Both are non-empty, different words
-        result.push(`<span class="diff-removed">${escapeHtml(oldWords[oldIdx])}</span>`);
-        result.push(`<span class="diff-added">${escapeHtml(newWords[newIdx])}</span>`);
+      // Look ahead in new words for a match with current old word
+      for (let i = newIdx + 1; i < Math.min(newWords.length, newIdx + 1 + maxSearch); i++) {
+        if (!isWhitespace(newWords[i]) && getWordContent(newWords[i]) === oldContent) {
+          // Found match - mark everything up to it as added, then continue
+          while (newIdx < i) {
+            const w = newWords[newIdx];
+            if (isWhitespace(w)) {
+              result.push(escapeHtml(w));
+            } else {
+              result.push(`<span class="diff-added">${escapeHtml(w)}</span>`);
+            }
+            newIdx++;
+          }
+          foundMatch = true;
+          break;
+        }
+      }
+      
+      if (!foundMatch) {
+        // Look ahead in old words for a match with current new word
+        for (let i = oldIdx + 1; i < Math.min(oldWords.length, oldIdx + 1 + maxSearch); i++) {
+          if (!isWhitespace(oldWords[i]) && getWordContent(oldWords[i]) === newContent) {
+            // Found match - mark everything up to it as removed, then continue
+            while (oldIdx < i) {
+              const w = oldWords[oldIdx];
+              if (isWhitespace(w)) {
+                result.push(escapeHtml(w));
+              } else {
+                result.push(`<span class="diff-removed">${escapeHtml(w)}</span>`);
+              }
+              oldIdx++;
+            }
+            foundMatch = true;
+            break;
+          }
+        }
+      }
+      
+      if (!foundMatch) {
+        // No match found - mark as changed
+        result.push(`<span class="diff-removed">${escapeHtml(oldWord)}</span>`);
+        result.push(`<span class="diff-added">${escapeHtml(newWord)}</span>`);
         oldIdx++;
         newIdx++;
       }
