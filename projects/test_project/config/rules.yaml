@@ -126,8 +126,8 @@ prompts:
       negative: ''
       positive: ''
     left:
-      negative: business suit, business attire, shirt
-      positive: this lady wearing a summer dress
+      negative: shirt, dress, business, jacket, trousers
+      positive: one peice respectable swimsuit, keep same person
     middle:
       positive: hawaiian skirt, coconut bra, professional setting, three women, midline,
         identical facial features, same pose, identical body proportions, background

@@ -9,9 +9,9 @@ comfyui:
   port: 8188
 # Note: AIVis configuration has been moved to AIVis.yaml
 parameters:
-  denoise: 0.75  # Will be auto-boosted to 0.75+ when masking is enabled
-  cfg: 20.0  # Increased from 15.0 to allow more aggressive guidance (max: 25.0)
-  steps: 30  # Increased from 25 for more refinement
+  denoise: 0.75  # From semi-successful attempt (ComfyUI_00181_.png)
+  cfg: 7.5  # From semi-successful attempt (lower than expected, but worked!)
+  steps: 30  # From semi-successful attempt
   seed: null
   sampler_name: dpmpp_2m_sde_gpu
   scheduler: karras
