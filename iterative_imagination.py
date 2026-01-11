@@ -596,6 +596,9 @@ class IterativeImagination:
                     resolved_mask_path = None
 
             if resolved_mask_path is not None:
+                # Log which mask file is being used
+                self.logger.info(f"Using mask: {active_mask_name or 'default'} from file: {resolved_mask_path}")
+                
                 # If the mask is all white (everything editable), prefer running without inpaint.
                 if self._mask_is_all_white(resolved_mask_path):
                     self.logger.warning("Mask appears all-white (>95% white pixels); treating as no-mask (non-inpaint) run.")
@@ -612,9 +615,9 @@ class IterativeImagination:
                             white = np.sum(arr >= 128)  # Pixels that are white (editable)
                             total = arr.size
                             coverage = white / total * 100
-                            self.logger.info(f"Mask coverage: {coverage:.1f}% white (editable), {100-coverage:.1f}% black (preserved)")
+                            self.logger.info(f"Mask '{active_mask_name or 'default'}' coverage: {coverage:.1f}% white (editable), {100-coverage:.1f}% black (preserved)")
                             if coverage > 50:
-                                self.logger.warning(f"Mask covers {coverage:.1f}% of image - this may affect all subjects, not just the target!")
+                                self.logger.warning(f"Mask '{active_mask_name or 'default'}' covers {coverage:.1f}% of image - this may affect multiple subjects, not just the target!")
                         except ImportError as e:
                             self.logger.warning(f"Could not analyze mask coverage (PIL/numpy not available): {e}")
                         except Exception as e:
