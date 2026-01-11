@@ -331,6 +331,30 @@
                                 </button>
                             </div>
                         </div>
+                        <!-- Mask Term Suggestions -->
+                        <div id="maskSuggestionsPanel" class="is-hidden">
+                            <div class="notification is-info is-light">
+                                <p class="is-size-7"><strong>Mask-Specific Suggestions</strong> (for mask: <span id="suggestionMaskName">-</span>)</p>
+                            </div>
+                            <div class="field">
+                                <label class="label is-size-7">Must Include Suggestions</label>
+                                <div id="maskMustIncludeSuggestions" class="box" style="padding: 0.75rem;">
+                                    <!-- Mask must_include suggestions will be rendered here -->
+                                </div>
+                            </div>
+                            <div class="field">
+                                <label class="label is-size-7">Ban Terms Suggestions</label>
+                                <div id="maskBanTermsSuggestions" class="box" style="padding: 0.75rem;">
+                                    <!-- Mask ban_terms suggestions will be rendered here -->
+                                </div>
+                            </div>
+                            <div class="field">
+                                <label class="label is-size-7">Avoid Terms Suggestions</label>
+                                <div id="maskAvoidTermsSuggestions" class="box" style="padding: 0.75rem;">
+                                    <!-- Mask avoid_terms suggestions will be rendered here -->
+                                </div>
+                            </div>
+                        </div>
                     </div>
                     <div id="suggestionPlaceholder" class="has-text-grey is-size-7">
                         Click 'Generate' to get AI suggestions for improving the prompts based on the current iteration.

@@ -140,7 +140,7 @@ function renderSuggestionList(container, suggestions, type, onApply) {
 }
 
 // Generate suggestions
-async function generateSuggestions(runId) {
+async function generateSuggestions(runId, maskName = "global") {
   if (!runId) {
     return null;
   }
@@ -159,7 +159,8 @@ async function generateSuggestions(runId) {
   
   try {
     const project = window.__LIVE_PROJECT__;
-    const res = await fetch(`/api/project/${project}/run/${runId}/suggest_prompts`);
+    const url = `/api/project/${project}/run/${runId}/suggest_prompts?mask_name=${encodeURIComponent(maskName || "global")}`;
+    const res = await fetch(url);
     const data = await res.json();
     
     if (!res.ok) {

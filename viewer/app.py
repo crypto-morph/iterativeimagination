@@ -496,8 +496,13 @@ def _compare_term_lists(current: List[str], suggested: List[str]) -> Dict:
 def suggest_prompts(project_name: str, run_id: str):
     """Get AIVis suggestions for improving prompts based on latest iteration.
     
+    Query parameters:
+    - mask_name: Optional mask name to get mask-specific suggestions
+    
     Returns structured term lists with suggestions (to_add, to_remove).
     """
+    # Get mask name from query parameter
+    mask_name = request.args.get("mask_name", "global").strip() or "global"
     try:
         project_dir = _safe_project_dir(project_name)
     except Exception:

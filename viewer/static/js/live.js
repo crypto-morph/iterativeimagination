@@ -383,8 +383,8 @@ async function generateSuggestion() {
   }
   
   try {
-    console.log(`Generating suggestions for runId: ${runId}`);
-    const suggestions = await SuggestionsModule.generateSuggestions(runId);
+    console.log(`Generating suggestions for runId: ${runId}, mask: ${currentMask || "global"}`);
+    const suggestions = await SuggestionsModule.generateSuggestions(runId, currentMask || "global");
     console.log("Suggestions received:", suggestions);
     
     if (suggestions) {
@@ -413,6 +413,36 @@ async function generateSuggestion() {
 
 // Apply a single suggestion
 function applySuggestion(type, action, term) {
+  // Handle mask terms
+  if (type.startsWith("mask_")) {
+    const maskType = type.replace("mask_", ""); // "must_include", "ban_terms", or "avoid_terms"
+    const maskTerms = PromptsModule.getMaskTerms();
+    let terms = [...(maskTerms[maskType] || [])];
+    
+    if (action === "add") {
+      const lower = term.toLowerCase();
+      if (!terms.some(t => t.toLowerCase() === lower)) {
+        terms.push(term);
+      }
+    } else if (action === "remove") {
+      terms = terms.filter(t => t.toLowerCase() !== term.toLowerCase());
+    }
+    
+    // Update mask terms
+    const newMaskTerms = { ...maskTerms };
+    newMaskTerms[maskType] = terms;
+    PromptsModule.setMaskTerms(
+      newMaskTerms.must_include || [],
+      newMaskTerms.ban_terms || [],
+      newMaskTerms.avoid_terms || []
+    );
+    
+    // Run validation
+    runValidation();
+    return;
+  }
+  
+  // Handle regular prompt terms
   let positiveTerms = [...PromptsModule.getPositiveTerms()];
   let negativeTerms = [...PromptsModule.getNegativeTerms()];
   

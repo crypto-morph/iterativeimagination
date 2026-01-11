@@ -219,6 +219,51 @@ suggest_rules_tags: |
     "general_notes": ["..."]
   }}
 
+suggest_mask_terms: |
+  You are helping improve mask-specific terms for Stable Diffusion inpainting.
+  
+  MASK CONTEXT:
+  - Mask name: {mask_name}
+  - Mask description: {mask_description}
+  
+  LATEST ITERATION DESCRIPTION (what was actually generated):
+  {latest_iteration_description}
+  
+  CURRENT MASK TERMS:
+  - must_include: {current_must_include}
+  - ban_terms: {current_ban_terms}
+  - avoid_terms: {current_avoid_terms}
+  
+  EVALUATION RESULTS:
+  - Overall score: {overall_score}%
+  - Failed criteria: {failed_criteria}
+  
+  ACTIVE CRITERIA FOR THIS MASK:
+  {active_criteria_text}
+  
+  Guidelines:
+  1. These terms apply ONLY to the masked area (inpainting region)
+  2. must_include: Terms that MUST appear in the positive prompt for the masked area
+  3. ban_terms: Terms that MUST appear in the negative prompt (things to avoid in masked area)
+  4. avoid_terms: Terms to discourage (softer than ban_terms)
+  5. Base suggestions on what's actually in the latest iteration image
+  6. Focus on what should be in the masked area based on the criteria
+  7. Keep terms short (1-3 words typically)
+  8. Don't suggest terms that contradict the image description
+  
+  Suggest improved mask terms that:
+  1. Address failed criteria specific to the masked area
+  2. Match what should be in the masked region based on the criteria
+  3. Are consistent with the latest iteration description
+  4. Help achieve the goals for this specific mask
+  
+  Provide your suggestions in JSON format:
+  {{
+      "must_include": ["term1", "term2", ...],
+      "ban_terms": ["term1", "term2", ...],
+      "avoid_terms": ["term1", "term2", ...]
+  }}
+
 recommend_parameters: |
   Analyze this GENERATED image and recommend adjustments to the denoise and cfg (Classifier-Free Guidance) parameters for the next iteration.
   
