@@ -439,14 +439,24 @@ async function saveAsProjectDefault() {
       return;
     }
     
+    // Ensure prompts structure exists
+    if (!rulesData.prompts) {
+      rulesData.prompts = {};
+    }
+    
     // Update prompts in rules structure
-    if (maskName && rulesData.prompts && rulesData.prompts.masks) {
+    if (maskName) {
+      // Save to mask-specific prompts
+      if (!rulesData.prompts.masks) {
+        rulesData.prompts.masks = {};
+      }
       if (!rulesData.prompts.masks[maskName]) {
         rulesData.prompts.masks[maskName] = {};
       }
       rulesData.prompts.masks[maskName].positive = prompts.positive;
       rulesData.prompts.masks[maskName].negative = prompts.negative;
-    } else if (rulesData.prompts) {
+    } else {
+      // Save to global prompts
       if (!rulesData.prompts.global) {
         rulesData.prompts.global = {};
       }
@@ -455,14 +465,35 @@ async function saveAsProjectDefault() {
     }
     
     // Update mask terms in acceptance criteria
-    // This is more complex - we need to find the criteria for this mask
-    // For now, we'll save the prompts and note that mask terms need manual update
+    // Find criteria that match this mask's active_criteria
+    if (maskName && rulesData.masking && rulesData.masking.masks) {
+      const maskConfig = rulesData.masking.masks.find(m => m.name === maskName);
+      if (maskConfig && maskConfig.active_criteria) {
+        const activeFields = maskConfig.active_criteria;
+        if (rulesData.acceptance_criteria) {
+          rulesData.acceptance_criteria.forEach(crit => {
+            if (crit.field && activeFields.includes(crit.field)) {
+              // Update this criterion's terms
+              if (maskTerms.must_include.length > 0) {
+                crit.must_include = maskTerms.must_include;
+              }
+              if (maskTerms.ban_terms.length > 0) {
+                crit.ban_terms = maskTerms.ban_terms;
+              }
+              if (maskTerms.avoid_terms.length > 0) {
+                crit.avoid_terms = maskTerms.avoid_terms;
+              }
+            }
+          });
+        }
+      }
+    }
     
-    // Save updated rules
+    // Save updated rules (endpoint expects {rules: {...}})
     const saveRes = await fetch(`/api/project/${project}/config/rules_struct`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(rulesData)
+      body: JSON.stringify({ rules: rulesData })
     });
     
     const saveData = await saveRes.json();

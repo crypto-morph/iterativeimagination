@@ -97,6 +97,9 @@ function initPrompts() {
         if (addTerm(positiveTerms, els.positiveInput.value, "positive")) {
           els.positiveInput.value = "";
           renderPositiveTerms();
+          if (window.runValidation) {
+            window.runValidation();
+          }
         }
       }
     });
@@ -109,6 +112,9 @@ function initPrompts() {
         if (addTerm(negativeTerms, els.negativeInput.value, "negative")) {
           els.negativeInput.value = "";
           renderNegativeTerms();
+          if (window.runValidation) {
+            window.runValidation();
+          }
         }
       }
     });
