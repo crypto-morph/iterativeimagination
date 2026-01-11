@@ -574,6 +574,16 @@ class IterativeImagination:
                                 active_mask_name = n
                                 break
 
+            # Fallback: try input/masks/{active_mask_name}.png if active_mask_name is set
+            if resolved_mask_path is None and active_mask_name:
+                try:
+                    named_mask = self.project.project_root / "input" / "masks" / f"{active_mask_name}.png"
+                    if named_mask.exists():
+                        resolved_mask_path = named_mask
+                        self.logger.info(f"Found mask file: input/masks/{active_mask_name}.png")
+                except Exception:
+                    pass
+            
             # Fallback to legacy mask.png if nothing selected
             if resolved_mask_path is None:
                 try:
