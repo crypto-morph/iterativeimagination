@@ -260,5 +260,8 @@ window.PromptsModule = {
   setMaskTerms,
   getMaskTerms,
   termsToPrompt,
-  promptToTerms
+  promptToTerms,
+  // Expose internal state for validation
+  getPositiveTerms: () => positiveTerms,
+  getNegativeTerms: () => negativeTerms
 };

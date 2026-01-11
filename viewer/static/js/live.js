@@ -1,4 +1,4 @@
-/* global window, document, fetch */
+/* global window, document, fetch, PromptsModule, ValidationModule, SuggestionsModule */
 
 const project = window.__LIVE_PROJECT__;
 
@@ -8,8 +8,6 @@ let pollTimer = null;
 let currentMask = "";
 let currentIteration = null;
 let currentSettings = null;
-let currentTerms = { must_include: [], ban_terms: [], avoid_terms: [] };
-let currentSuggestion = null;
 
 // Utility functions
 function $(id) {
@@ -19,160 +17,6 @@ function $(id) {
 function setStatus(text) {
   const el = $("statusText");
   if (el) el.textContent = text || "Ready";
-}
-
-function escapeHtml(s) {
-  return String(s)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
-// Diff highlighting (GitHub-style) - improved algorithm
-function highlightDiff(oldText, newText) {
-  // If texts are identical, just return escaped new text
-  if (oldText === newText) {
-    return `<span class="diff-unchanged">${escapeHtml(newText)}</span>`;
-  }
-  
-  // Split into words (preserving whitespace)
-  const oldWords = oldText.split(/(\s+)/).filter(w => w.length > 0);
-  const newWords = newText.split(/(\s+)/).filter(w => w.length > 0);
-  
-  // Use a simple word-by-word comparison
-  const result = [];
-  let oldIdx = 0;
-  let newIdx = 0;
-  
-  // Helper to check if a word is whitespace
-  function isWhitespace(word) {
-    return /^\s+$/.test(word);
-  }
-  
-  // Helper to get word content (without whitespace)
-  function getWordContent(word) {
-    return word.trim().toLowerCase();
-  }
-  
-  while (oldIdx < oldWords.length || newIdx < newWords.length) {
-    // Handle end of one array
-    if (oldIdx >= oldWords.length) {
-      // Only new words left - all added
-      while (newIdx < newWords.length) {
-        const word = newWords[newIdx];
-        if (isWhitespace(word)) {
-          result.push(escapeHtml(word));
-        } else {
-          result.push(`<span class="diff-added">${escapeHtml(word)}</span>`);
-        }
-        newIdx++;
-      }
-      break;
-    }
-    
-    if (newIdx >= newWords.length) {
-      // Only old words left - all removed
-      while (oldIdx < oldWords.length) {
-        const word = oldWords[oldIdx];
-        if (isWhitespace(word)) {
-          result.push(escapeHtml(word));
-        } else {
-          result.push(`<span class="diff-removed">${escapeHtml(word)}</span>`);
-        }
-        oldIdx++;
-      }
-      break;
-    }
-    
-    const oldWord = oldWords[oldIdx];
-    const newWord = newWords[newIdx];
-    
-    // Handle whitespace
-    if (isWhitespace(oldWord) && isWhitespace(newWord)) {
-      result.push(escapeHtml(oldWord));
-      oldIdx++;
-      newIdx++;
-      continue;
-    }
-    
-    if (isWhitespace(oldWord)) {
-      result.push(escapeHtml(oldWord));
-      oldIdx++;
-      continue;
-    }
-    
-    if (isWhitespace(newWord)) {
-      result.push(escapeHtml(newWord));
-      newIdx++;
-      continue;
-    }
-    
-    // Compare word content
-    const oldContent = getWordContent(oldWord);
-    const newContent = getWordContent(newWord);
-    
-    if (oldContent === newContent) {
-      // Same word - unchanged
-      result.push(`<span class="diff-unchanged">${escapeHtml(oldWord)}</span>`);
-      oldIdx++;
-      newIdx++;
-    } else {
-      // Different words - look ahead to see if we can find a match
-      let foundMatch = false;
-      let searchAhead = 0;
-      const maxSearch = 10; // Limit search to avoid O(n²) behavior
-      
-      // Look ahead in new words for a match with current old word
-      for (let i = newIdx + 1; i < Math.min(newWords.length, newIdx + 1 + maxSearch); i++) {
-        if (!isWhitespace(newWords[i]) && getWordContent(newWords[i]) === oldContent) {
-          // Found match - mark everything up to it as added, then continue
-          while (newIdx < i) {
-            const w = newWords[newIdx];
-            if (isWhitespace(w)) {
-              result.push(escapeHtml(w));
-            } else {
-              result.push(`<span class="diff-added">${escapeHtml(w)}</span>`);
-            }
-            newIdx++;
-          }
-          foundMatch = true;
-          break;
-        }
-      }
-      
-      if (!foundMatch) {
-        // Look ahead in old words for a match with current new word
-        for (let i = oldIdx + 1; i < Math.min(oldWords.length, oldIdx + 1 + maxSearch); i++) {
-          if (!isWhitespace(oldWords[i]) && getWordContent(oldWords[i]) === newContent) {
-            // Found match - mark everything up to it as removed, then continue
-            while (oldIdx < i) {
-              const w = oldWords[oldIdx];
-              if (isWhitespace(w)) {
-                result.push(escapeHtml(w));
-              } else {
-                result.push(`<span class="diff-removed">${escapeHtml(w)}</span>`);
-              }
-              oldIdx++;
-            }
-            foundMatch = true;
-            break;
-          }
-        }
-      }
-      
-      if (!foundMatch) {
-        // No match found - mark as changed
-        result.push(`<span class="diff-removed">${escapeHtml(oldWord)}</span>`);
-        result.push(`<span class="diff-added">${escapeHtml(newWord)}</span>`);
-        oldIdx++;
-        newIdx++;
-      }
-    }
-  }
-  
-  return result.join("");
 }
 
 // Load masks dropdown
@@ -210,7 +54,7 @@ async function loadMasks() {
       currentMask = "global";
     }
     
-    // Load data for selected mask immediately (with retry logic inside)
+    // Load data for selected mask
     await loadMaskData();
   } catch (e) {
     console.error("Failed to load masks:", e);
@@ -220,115 +64,63 @@ async function loadMasks() {
 // Load mask-specific data (prompts, terms)
 async function loadMaskData() {
   if (!currentMask) {
-    console.log("No mask selected, skipping loadMaskData");
-    // Still try to load global prompts
     currentMask = "global";
   }
   
   console.log(`Loading data for mask: ${currentMask}`);
   
-  // Load prompts - retry if elements don't exist yet
-  let retries = 0;
-  const maxRetries = 5;
-  while (retries < maxRetries) {
-    const posEl = $("inputPositivePrompt");
-    const negEl = $("inputNegativePrompt");
-    
-    if (!posEl || !negEl) {
-      if (retries < maxRetries - 1) {
-        await new Promise(resolve => setTimeout(resolve, 100));
-        retries++;
-        continue;
-      } else {
-        console.error("Input prompt elements not found after retries");
-        return;
-      }
+  // Load prompts as terms
+  try {
+    const res = await fetch(`/api/project/${project}/mask/${currentMask}/prompts`);
+    const data = await res.json();
+    if (res.ok) {
+      // Parse prompts into terms and set them
+      PromptsModule.setTermsFromPrompts(data.positive || "", data.negative || "");
     }
-    
-    try {
-      const res = await fetch(`/api/project/${project}/mask/${currentMask}/prompts`);
-      const data = await res.json();
-      if (res.ok) {
-        posEl.value = data.positive || "";
-        negEl.value = data.negative || "";
-        console.log(`Loaded prompts for ${currentMask}:`, data);
-      } else {
-        console.error("Failed to load prompts:", data.error);
-        // Set empty if API fails
-        posEl.value = "";
-        negEl.value = "";
-      }
-    } catch (e) {
-      console.error("Failed to load mask prompts:", e);
-      posEl.value = "";
-      negEl.value = "";
-    }
-    break;
+  } catch (e) {
+    console.error("Failed to load mask prompts:", e);
   }
   
-  // Load terms
+  // Load mask terms
   try {
     const res = await fetch(`/api/project/${project}/mask/${currentMask}/terms`);
     const data = await res.json();
     if (res.ok) {
-      currentTerms = {
-        must_include: data.must_include || [],
-        ban_terms: data.ban_terms || [],
-        avoid_terms: data.avoid_terms || []
-      };
-      console.log(`Loaded terms for ${currentMask}:`, currentTerms);
-      renderTerms();
-    } else {
-      console.error("Failed to load terms:", data.error);
+      PromptsModule.setMaskTerms(
+        data.must_include || [],
+        data.ban_terms || [],
+        data.avoid_terms || []
+      );
     }
   } catch (e) {
     console.error("Failed to load mask terms:", e);
   }
+  
+  // Run validation
+  runValidation();
 }
 
-// Render terms
-function renderTerms() {
-  renderTermList("must_include", currentTerms.must_include);
-  renderTermList("ban_terms", currentTerms.ban_terms);
-  renderTermList("avoid_terms", currentTerms.avoid_terms);
-}
-
-function renderTermList(type, terms) {
-  const container = $(type === "must_include" ? "mustIncludeTerms" : type === "ban_terms" ? "banTerms" : "avoidTerms");
-  if (!container) return;
+// Run validation
+function runValidation() {
+  const positiveTerms = PromptsModule.getPositiveTerms();
+  const negativeTerms = PromptsModule.getNegativeTerms();
+  const maskTerms = PromptsModule.getMaskTerms();
   
-  container.innerHTML = "";
+  const issues = ValidationModule.ValidationRules.validateAll(
+    positiveTerms,
+    negativeTerms,
+    maskTerms
+  );
   
-  if (terms.length === 0) {
-    container.innerHTML = '<span class="has-text-grey is-size-7">No terms defined</span>';
-    return;
+  const container = $("validationIssues");
+  if (container) {
+    if (issues.length > 0) {
+      container.style.display = "block";
+      ValidationModule.displayValidationIssues(container, issues);
+    } else {
+      container.style.display = "none";
+    }
   }
-  
-  terms.forEach((term, idx) => {
-    const tag = document.createElement("span");
-    tag.className = "tag term-tag";
-    tag.innerHTML = `
-      <span>${escapeHtml(term)}</span>
-      <button class="delete is-small" data-term-type="${type}" data-term-idx="${idx}"></button>
-    `;
-    container.appendChild(tag);
-  });
-  
-  // Wire delete buttons
-  container.querySelectorAll(".delete").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const termType = btn.dataset.termType;
-      const termIdx = parseInt(btn.dataset.termIdx);
-      if (termType === "must_include") {
-        currentTerms.must_include.splice(termIdx, 1);
-      } else if (termType === "ban_terms") {
-        currentTerms.ban_terms.splice(termIdx, 1);
-      } else if (termType === "avoid_terms") {
-        currentTerms.avoid_terms.splice(termIdx, 1);
-      }
-      renderTerms();
-    });
-  });
 }
 
 // Load settings
@@ -495,56 +287,24 @@ async function saveSettings() {
   }
 }
 
-// Load iteration prompts
-async function loadIterationPrompts() {
-  try {
-    const res = await fetch(`/api/project/${project}/working/aigen/prompts`, { cache: "no-store" });
-    const data = await res.json();
-    if (res.ok) {
-      $("iterationPositivePrompt").value = data.positive || "";
-      $("iterationNegativePrompt").value = data.negative || "";
-    }
-  } catch (e) {
-    console.error("Failed to load iteration prompts:", e);
-  }
-}
-
-// Save iteration prompts
-async function saveIterationPrompts() {
-  const positive = $("iterationPositivePrompt").value || "";
-  const negative = $("iterationNegativePrompt").value || "";
-  
-  const statusEl = $("promptsStatus");
-  statusEl.textContent = "Saving...";
-  
-  try {
-    const res = await fetch(`/api/project/${project}/working/aigen/prompts`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ positive, negative })
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      statusEl.textContent = data.error || "Failed to save";
-      return;
-    }
-    statusEl.textContent = "Saved successfully";
-    setTimeout(() => { statusEl.textContent = ""; }, 2000);
-  } catch (e) {
-    statusEl.textContent = `Error: ${e.message}`;
-  }
-}
-
-// Describe images
-async function describeInput() {
+// Describe images as terms
+async function describeInputTerms() {
   const container = $("inputDescription");
+  if (!container) return;
+  
   container.innerHTML = '<span class="has-text-grey">Generating description...</span>';
   
   try {
-    const res = await fetch(`/api/project/${project}/input/describe`);
+    const res = await fetch(`/api/project/${project}/input/describe_terms`);
     const data = await res.json();
     if (res.ok) {
-      container.textContent = data.description || "No description available";
+      // Set terms from description
+      PromptsModule.setTermsFromPrompts(
+        (data.positive_terms || []).join(", "),
+        (data.negative_terms || []).join(", ")
+      );
+      container.innerHTML = '<span class="has-text-success"><i class="fas fa-check"></i> Terms loaded from image description</span>';
+      runValidation();
     } else {
       container.innerHTML = `<span class="has-text-danger">${escapeHtml(data.error || "Failed")}</span>`;
     }
@@ -553,17 +313,21 @@ async function describeInput() {
   }
 }
 
-async function describeLatest() {
+async function describeLatestTerms() {
   if (!runId || currentIteration === null) return;
   
   const container = $("latestDescription");
+  if (!container) return;
+  
   container.innerHTML = '<span class="has-text-grey">Generating description...</span>';
   
   try {
-    const res = await fetch(`/api/project/${project}/run/${runId}/describe/${currentIteration}`);
+    const res = await fetch(`/api/project/${project}/run/${runId}/describe_terms/${currentIteration}`);
     const data = await res.json();
     if (res.ok) {
-      container.textContent = data.description || "No description available";
+      container.innerHTML = '<span class="has-text-success"><i class="fas fa-check"></i> Terms loaded from iteration description</span>';
+      // Optionally update prompts with iteration terms
+      // PromptsModule.setTermsFromPrompts(...)
     } else {
       container.innerHTML = `<span class="has-text-danger">${escapeHtml(data.error || "Failed")}</span>`;
     }
@@ -579,59 +343,153 @@ async function generateSuggestion() {
     return;
   }
   
-  const btn = $("generateSuggestionBtn");
-  const box = $("suggestionBox");
-  const placeholder = $("suggestionPlaceholder");
-  
-  btn.disabled = true;
-  btn.innerHTML = '<span class="icon"><i class="fas fa-spinner fa-spin"></i></span><span>Generating...</span>';
-  box.classList.add("is-hidden");
-  placeholder.textContent = "Generating AI suggestions...";
-  
-  try {
-    const res = await fetch(`/api/project/${project}/run/${runId}/suggest_prompts`);
-    const data = await res.json();
-    if (!res.ok) {
-      placeholder.innerHTML = `<span class="has-text-danger">${escapeHtml(data.error || "Failed")}</span>`;
-      return;
-    }
-    
-    currentSuggestion = data;
-    
-    // Render with diff highlighting
-    const posDiff = highlightDiff(data.current_positive || "", data.suggested_positive || "");
-    const negDiff = highlightDiff(data.current_negative || "", data.suggested_negative || "");
-    
-    $("suggestedPositivePrompt").innerHTML = posDiff;
-    $("suggestedNegativePrompt").innerHTML = negDiff;
-    
-    box.classList.remove("is-hidden");
-    placeholder.classList.add("is-hidden");
-    setStatus("Suggestion generated");
-  } catch (e) {
-    placeholder.innerHTML = `<span class="has-text-danger">Error: ${escapeHtml(e.message)}</span>`;
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = '<span class="icon"><i class="fas fa-magic"></i></span><span>Generate</span>';
+  const suggestions = await SuggestionsModule.generateSuggestions(runId);
+  if (suggestions) {
+    SuggestionsModule.renderSuggestions(suggestions, applySuggestion);
   }
 }
 
-// Apply suggestion
-function applySuggestion() {
-  if (!currentSuggestion) return;
+// Apply a single suggestion
+function applySuggestion(type, action, term) {
+  let positiveTerms = [...PromptsModule.getPositiveTerms()];
+  let negativeTerms = [...PromptsModule.getNegativeTerms()];
   
-  // Get plain text from contenteditable divs (strip HTML)
-  const posEl = $("suggestedPositivePrompt");
-  const negEl = $("suggestedNegativePrompt");
+  if (type === "positive") {
+    if (action === "add") {
+      // Add to positive
+      const lower = term.toLowerCase();
+      if (!positiveTerms.some(t => t.toLowerCase() === lower)) {
+        positiveTerms.push(term);
+      }
+    } else if (action === "remove") {
+      // Remove from positive
+      positiveTerms = positiveTerms.filter(t => t.toLowerCase() !== term.toLowerCase());
+    }
+  } else if (type === "negative") {
+    if (action === "add") {
+      // Add to negative
+      const lower = term.toLowerCase();
+      if (!negativeTerms.some(t => t.toLowerCase() === lower)) {
+        negativeTerms.push(term);
+      }
+    } else if (action === "remove") {
+      // Remove from negative
+      negativeTerms = negativeTerms.filter(t => t.toLowerCase() !== term.toLowerCase());
+    }
+  }
   
-  const positive = posEl.textContent || posEl.innerText || "";
-  const negative = negEl.textContent || negEl.innerText || "";
+  // Update prompts
+  PromptsModule.setTermsFromPrompts(
+    PromptsModule.termsToPrompt(positiveTerms),
+    PromptsModule.termsToPrompt(negativeTerms)
+  );
   
-  $("iterationPositivePrompt").value = positive.trim();
-  $("iterationNegativePrompt").value = negative.trim();
+  // Run validation
+  runValidation();
+}
+
+// Save prompts
+async function savePrompts() {
+  const prompts = PromptsModule.getCurrentPrompts();
+  const statusEl = $("promptsStatus");
+  statusEl.textContent = "Saving...";
   
-  setStatus("Suggestion applied to iteration prompts");
-  $("promptsStatus").textContent = "Applied from suggestion (not saved yet)";
+  try {
+    const res = await fetch(`/api/project/${project}/working/aigen/prompts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        positive: prompts.positive,
+        negative: prompts.negative
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      statusEl.textContent = data.error || "Failed to save";
+      return;
+    }
+    statusEl.textContent = "Saved successfully";
+    setTimeout(() => { statusEl.textContent = ""; }, 2000);
+  } catch (e) {
+    statusEl.textContent = `Error: ${e.message}`;
+  }
+}
+
+// Save as project default (to rules.yaml)
+async function saveAsProjectDefault() {
+  if (!confirm("Save current prompts and mask terms as project default in rules.yaml?\n\nThis will overwrite the existing rules.yaml configuration.")) {
+    return;
+  }
+  
+  const prompts = PromptsModule.getCurrentPrompts();
+  const maskTerms = PromptsModule.getMaskTerms();
+  const statusEl = $("promptsStatus");
+  statusEl.textContent = "Saving to rules.yaml...";
+  
+  try {
+    // Get current mask name
+    const maskName = currentMask === "global" ? null : currentMask;
+    
+    // Load current rules.yaml structure
+    const res = await fetch(`/api/project/${project}/config/rules_struct`);
+    const rulesData = await res.json();
+    
+    if (!res.ok) {
+      statusEl.textContent = rulesData.error || "Failed to load rules.yaml";
+      return;
+    }
+    
+    // Update prompts in rules structure
+    if (maskName && rulesData.prompts && rulesData.prompts.masks) {
+      if (!rulesData.prompts.masks[maskName]) {
+        rulesData.prompts.masks[maskName] = {};
+      }
+      rulesData.prompts.masks[maskName].positive = prompts.positive;
+      rulesData.prompts.masks[maskName].negative = prompts.negative;
+    } else if (rulesData.prompts) {
+      if (!rulesData.prompts.global) {
+        rulesData.prompts.global = {};
+      }
+      rulesData.prompts.global.positive = prompts.positive;
+      rulesData.prompts.global.negative = prompts.negative;
+    }
+    
+    // Update mask terms in acceptance criteria
+    // This is more complex - we need to find the criteria for this mask
+    // For now, we'll save the prompts and note that mask terms need manual update
+    
+    // Save updated rules
+    const saveRes = await fetch(`/api/project/${project}/config/rules_struct`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(rulesData)
+    });
+    
+    const saveData = await saveRes.json();
+    if (!saveRes.ok) {
+      statusEl.textContent = saveData.error || "Failed to save rules.yaml";
+      return;
+    }
+    
+    statusEl.textContent = "Saved to rules.yaml successfully!";
+    setTimeout(() => { statusEl.textContent = ""; }, 3000);
+  } catch (e) {
+    statusEl.textContent = `Error: ${e.message}`;
+  }
+}
+
+// Load iteration prompts
+async function loadIterationPrompts() {
+  try {
+    const res = await fetch(`/api/project/${project}/working/aigen/prompts`, { cache: "no-store" });
+    const data = await res.json();
+    if (res.ok) {
+      PromptsModule.setTermsFromPrompts(data.positive || "", data.negative || "");
+      runValidation();
+    }
+  } catch (e) {
+    console.error("Failed to load iteration prompts:", e);
+  }
 }
 
 // Reset run
@@ -666,7 +524,7 @@ async function runIteration() {
   }
   
   // Save prompts first
-  await saveIterationPrompts();
+  await savePrompts();
   
   // Start/continue run
   const maxIter = parseInt($("maxIterInput").value || "20", 10);
@@ -693,10 +551,10 @@ async function runIteration() {
     
     // Auto-describe images after a delay
     setTimeout(() => {
-      describeInput();
+      describeInputTerms();
       pollOnce().then(() => {
         if (currentIteration) {
-          describeLatest();
+          describeLatestTerms();
         }
       });
     }, 2000);
@@ -738,7 +596,7 @@ function renderLatest(state, iterations) {
     // Auto-describe if not already described
     const descEl = $("latestDescription");
     if (descEl && descEl.textContent.includes("No iteration")) {
-      describeLatest();
+      describeLatestTerms();
     }
   } else {
     currentIteration = null;
@@ -774,28 +632,6 @@ function startPolling() {
 
 // Tab switching
 function initTabs() {
-  // Prompt tabs
-  const promptTabs = document.querySelectorAll('.tabs.is-boxed [data-tab]');
-  promptTabs.forEach(tab => {
-    tab.addEventListener("click", (e) => {
-      e.preventDefault();
-      const tabName = tab.dataset.tab;
-      
-      // Update tab buttons
-      tab.parentElement.parentElement.querySelectorAll("li").forEach(li => li.classList.remove("is-active"));
-      tab.parentElement.classList.add("is-active");
-      
-      // Update content
-      document.querySelectorAll(".tab-content").forEach(content => {
-        content.classList.add("is-hidden");
-      });
-      const contentEl = $(tabName);
-      if (contentEl) {
-        contentEl.classList.remove("is-hidden");
-      }
-    });
-  });
-  
   // Term tabs
   const termTabs = document.querySelectorAll('.tabs.is-small [data-term-tab]');
   termTabs.forEach(tab => {
@@ -827,10 +663,16 @@ function wireUI() {
     currentMask = e.target.value;
     loadMaskData();
   });
-  $("savePromptsBtn").addEventListener("click", saveIterationPrompts);
+  $("savePromptsBtn").addEventListener("click", savePrompts);
+  $("saveAsDefaultBtn").addEventListener("click", saveAsProjectDefault);
   $("saveSettingsBtn").addEventListener("click", saveSettings);
   $("generateSuggestionBtn").addEventListener("click", generateSuggestion);
-  $("applySuggestionBtn").addEventListener("click", applySuggestion);
+  $("applySuggestionBtn").addEventListener("click", () => {
+    SuggestionsModule.applyAllSuggestions(applySuggestion);
+  });
+  
+  // Expose validation function globally so prompts module can call it
+  window.runValidation = runValidation;
   
   initTabs();
 }
@@ -838,6 +680,9 @@ function wireUI() {
 // Initialize
 async function init() {
   console.log("Initializing live page...");
+  
+  // Initialize prompt module first
+  PromptsModule.init();
   
   // Wire UI first so event handlers are ready
   wireUI();
@@ -848,17 +693,22 @@ async function init() {
   // Load masks (this will set currentMask and call loadMaskData)
   await loadMasks();
   
-  // Ensure mask data is loaded (in case loadMasks didn't trigger it)
-  if (currentMask) {
-    await loadMaskData();
-  }
-  
   // Load other data
   await loadSettings();
   await loadIterationPrompts();
-  await describeInput();
+  await describeInputTerms();
   
   console.log("Initialization complete");
+}
+
+// Utility
+function escapeHtml(s) {
+  return String(s)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
 
 // Start initialization when DOM is ready
