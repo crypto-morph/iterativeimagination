@@ -7,6 +7,8 @@ let pollTimer = null;
 let pendingNudge = { less_random: false, too_similar: false };
 let rulesLoadedText = null;
 let promptsLoaded = false;
+let currentIteration = null;
+let currentDescription = null;
 
 function $(id) {
   return document.getElementById(id);
@@ -206,12 +208,19 @@ function renderLatest(state, iterations) {
   const banner = $("turnBanner");
   const spinner = $("spinnerOverlay");
   const feedbackPanel = $("feedbackPanel");
+  const describeBtn = $("describeBtn");
+  const latestMetaText = $("latestMetaText");
 
   if (latest) {
     const n = latest.iteration_number;
+    currentIteration = n;
     $("latestImg").src = `/api/project/${project}/run/${runId}/image/iteration_${n}.png`;
     const score = (latest.evaluation || {}).overall_score;
-    $("latestMeta").textContent = `Iteration ${n} | score: ${score}`;
+    latestMetaText.textContent = `Iteration ${n} | score: ${score}`;
+    describeBtn.disabled = false;
+  } else {
+    currentIteration = null;
+    describeBtn.disabled = true;
   }
 
   if (state.status === "waiting") {
@@ -319,6 +328,53 @@ async function submitFeedback() {
   pollOnce();
 }
 
+async function describeCurrentIteration() {
+  if (!runId || currentIteration === null) return;
+  
+  const describeBtn = $("describeBtn");
+  const descriptionBox = $("descriptionBox");
+  const descriptionText = $("descriptionText");
+  
+  describeBtn.disabled = true;
+  describeBtn.innerHTML = '<span class="icon"><i class="fas fa-spinner fa-spin"></i></span><span>Describing...</span>';
+  descriptionBox.classList.add("is-hidden");
+  
+  try {
+    const res = await fetch(`/api/project/${project}/run/${runId}/describe/${currentIteration}`);
+    const data = await res.json();
+    if (!res.ok) {
+      setStatus(data.error || "Failed to describe image");
+      return;
+    }
+    
+    currentDescription = data.description;
+    descriptionText.textContent = data.description;
+    descriptionBox.classList.remove("is-hidden");
+    setStatus(`Iteration ${currentIteration} described by AIVis`);
+  } catch (e) {
+    setStatus(`Error: ${e.message}`);
+  } finally {
+    describeBtn.disabled = false;
+    describeBtn.innerHTML = '<span class="icon"><i class="fas fa-eye"></i></span><span>Describe with AIVis</span>';
+  }
+}
+
+function useDescriptionInFeedback() {
+  if (!currentDescription) return;
+  
+  const commentBox = $("commentBox");
+  const currentText = commentBox.value.trim();
+  
+  // Add description to feedback, with separator if there's existing text
+  if (currentText) {
+    commentBox.value = `${currentText}\n\n--- AIVis Description ---\n${currentDescription}`;
+  } else {
+    commentBox.value = `--- AIVis Description ---\n${currentDescription}`;
+  }
+  
+  setStatus("Description added to feedback box");
+}
+
 function wireUI() {
   $("startBtn").addEventListener("click", startRun);
   $("submitFeedbackBtn").addEventListener("click", submitFeedback);
@@ -326,6 +382,8 @@ function wireUI() {
   $("saveRulesBtn").addEventListener("click", saveRules);
   $("loadPromptsBtn").addEventListener("click", loadPrompts);
   $("savePromptsBtn").addEventListener("click", savePrompts);
+  $("describeBtn").addEventListener("click", describeCurrentIteration);
+  $("useDescriptionBtn").addEventListener("click", useDescriptionInFeedback);
 
   $("btnLessRandom").addEventListener("click", () => {
     pendingNudge.less_random = !pendingNudge.less_random;

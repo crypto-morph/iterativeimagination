@@ -136,6 +136,57 @@ def get_iterations(project_name: str, run_id: str):
     return jsonify({'iterations': iterations})
 
 
+@app.route('/api/project/<project_name>/run/<run_id>/describe/<int:iteration_number>')
+def describe_iteration(project_name: str, run_id: str, iteration_number: int):
+    """Get AIVis description of an iteration image."""
+    try:
+        project_dir = _safe_project_dir(project_name)
+    except Exception:
+        return jsonify({"error": "Invalid project"}), 400
+    
+    run_dir = project_dir / "working" / run_id
+    image_path = run_dir / "images" / f"iteration_{iteration_number}.png"
+    
+    if not image_path.exists():
+        return jsonify({"error": f"Iteration {iteration_number} image not found"}), 404
+    
+    # Load AIVis config
+    try:
+        aivis_config_path = project_dir / "config" / "AIVis.yaml"
+        if not aivis_config_path.exists():
+            # Fallback to defaults
+            defaults_dir = Path(__file__).parent.parent / "defaults" / "config"
+            aivis_config_path = defaults_dir / "AIVis.yaml"
+        
+        with open(aivis_config_path, 'r', encoding='utf-8') as f:
+            aivis_config = yaml.safe_load(f) or {}
+    except Exception as e:
+        return jsonify({"error": f"Failed to load AIVis config: {e}"}), 500
+    
+    # Initialize AIVis client
+    try:
+        import sys
+        from pathlib import Path as _Path
+        sys.path.insert(0, str(_Path(__file__).parent.parent / "src"))
+        from aivis_client import AIVisClient  # noqa: E402
+        
+        aivis = AIVisClient.from_config(aivis_config, project_dir)
+    except Exception as e:
+        return jsonify({"error": f"Failed to initialize AIVis: {e}"}), 500
+    
+    # Get description
+    try:
+        description = aivis.describe_image(str(image_path))
+        return jsonify({
+            "ok": True,
+            "iteration": iteration_number,
+            "description": description,
+            "metadata": getattr(aivis, '_last_request_metadata', {})
+        }), 200
+    except Exception as e:
+        return jsonify({"error": f"Failed to describe image: {e}"}), 500
+
+
 @app.route('/api/project/<project_name>/run/<run_id>/image/<filename>')
 def get_image(project_name: str, run_id: str, filename: str):
     """Serve iteration images."""
