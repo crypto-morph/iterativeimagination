@@ -134,6 +134,11 @@ async function generateSuggestions(runId) {
     }
     
     currentSuggestions = data;
+    
+    // Enable apply button when suggestions are ready
+    const applyBtn = document.getElementById("applySuggestionBtn");
+    if (applyBtn) applyBtn.disabled = false;
+    
     return data;
   } catch (e) {
     if (placeholder) {
