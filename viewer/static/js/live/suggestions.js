@@ -35,6 +35,18 @@ function renderSuggestions(suggestions, onApply) {
     `;
   }
   
+  // Show current prompts for context
+  const currentPosEl = document.getElementById("suggestionCurrentPositive");
+  const currentNegEl = document.getElementById("suggestionCurrentNegative");
+  if (currentPosEl) {
+    const currentPos = (suggestions.current_positive_terms || []).join(", ") || "None";
+    currentPosEl.textContent = currentPos || "None";
+  }
+  if (currentNegEl) {
+    const currentNeg = (suggestions.current_negative_terms || []).join(", ") || "None";
+    currentNegEl.textContent = currentNeg || "None";
+  }
+  
   // Enable apply button when suggestions are rendered
   const applyBtn = document.getElementById("applySuggestionBtn");
   if (applyBtn) applyBtn.disabled = false;
