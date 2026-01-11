@@ -122,8 +122,15 @@ class WorkflowManager:
                 return None
             return str(v[0])
 
-        def _collect_textencode_nodes_from(start_node_id: str, max_depth: int = 6) -> Set[str]:
-            """Walk upstream through common conditioning nodes to find CLIPTextEncode nodes."""
+        def _collect_textencode_nodes_from(start_node_id: str, max_depth: int = 6, follow_key: str | None = None) -> Set[str]:
+            """Walk upstream through common conditioning nodes to find CLIPTextEncode nodes.
+            
+            Args:
+                start_node_id: Node to start from
+                max_depth: Maximum traversal depth
+                follow_key: If set, only follow this input key (e.g., "positive" or "negative")
+                           This prevents InpaintModelConditioning from mixing positive/negative paths
+            """
             out: Set[str] = set()
             seen: Set[str] = set()
             stack: list[Tuple[str, int]] = [(str(start_node_id), 0)]
@@ -142,10 +149,20 @@ class WorkflowManager:
                 # Common conditioning nodes that point at CLIPTextEncode via inputs like "positive"/"negative"
                 inputs = n.get("inputs") or {}
                 if isinstance(inputs, dict):
-                    for key in ("positive", "negative", "conditioning", "cond", "prompt"):
+                    # If follow_key is specified, only follow that key (prevents mixing positive/negative)
+                    keys_to_check = [follow_key] if follow_key else ("positive", "negative", "conditioning", "cond", "prompt")
+                    for key in keys_to_check:
+                        if key is None:
+                            continue
                         nxt = _follow_link(inputs.get(key))
                         if nxt:
-                            stack.append((nxt, depth + 1))
+                            # For InpaintModelConditioning, continue following the same key
+                            next_follow_key = follow_key if ct == "InpaintModelConditioning" else None
+                            # Recursively collect with the same follow_key to maintain path separation
+                            if next_follow_key:
+                                out |= _collect_textencode_nodes_from(nxt, max_depth - depth - 1, next_follow_key)
+                            else:
+                                stack.append((nxt, depth + 1))
             return out
 
         def _update_prompt_texts(positive_text: str | None, negative_text: str | None) -> None:
@@ -163,9 +180,19 @@ class WorkflowManager:
                 pos_root = _follow_link(ks_inputs.get("positive"))
                 neg_root = _follow_link(ks_inputs.get("negative"))
                 if pos_root:
-                    pos_targets |= _collect_textencode_nodes_from(pos_root)
+                    # Check if pos_root is InpaintModelConditioning - if so, follow its "positive" input
+                    pos_node = _get_node(pos_root)
+                    if pos_node and pos_node.get("class_type") == "InpaintModelConditioning":
+                        pos_targets |= _collect_textencode_nodes_from(pos_root, follow_key="positive")
+                    else:
+                        pos_targets |= _collect_textencode_nodes_from(pos_root)
                 if neg_root:
-                    neg_targets |= _collect_textencode_nodes_from(neg_root)
+                    # Check if neg_root is InpaintModelConditioning - if so, follow its "negative" input
+                    neg_node = _get_node(neg_root)
+                    if neg_node and neg_node.get("class_type") == "InpaintModelConditioning":
+                        neg_targets |= _collect_textencode_nodes_from(neg_root, follow_key="negative")
+                    else:
+                        neg_targets |= _collect_textencode_nodes_from(neg_root)
 
             # Fallback: if we couldn't trace, update by _meta title hints.
             if not pos_targets and positive_text:

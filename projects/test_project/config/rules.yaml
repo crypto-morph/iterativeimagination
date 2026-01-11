@@ -127,7 +127,7 @@ prompts:
       positive: ''
     left:
       negative: shirt, dress, business, jacket, trousers
-      positive: one peice respectable swimsuit, keep same person
+      positive: one piece respectable swimsuit, keep same person
     middle:
       positive: wearing uk police uniform, keep same person
       negative: shirt, dress, business, jacket, trousers
