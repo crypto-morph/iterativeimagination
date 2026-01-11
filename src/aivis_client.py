@@ -734,6 +734,78 @@ class AIVisClient:
             }
             return f"Failed to describe image: {str(e)}"
     
+    def describe_image_as_terms(self, image_path: str) -> Dict:
+        """Describe an image as structured term lists (positive, negative, must_include, ban_terms).
+        
+        Returns a dict with keys: positive_terms, negative_terms, must_include, ban_terms
+        Each value is a list of strings (prompt terms).
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        logger.debug(f"Converting image to base64: {image_path}")
+        image_b64 = self._image_to_base64(image_path)
+        logger.debug(f"Image converted, base64 length: {len(image_b64)}")
+        
+        # Use the new prompt template if available, fallback to describe_image
+        prompt_template = self.prompts.get('describe_image_as_terms')
+        if not prompt_template:
+            # Fallback: use regular description and parse it (not ideal but works)
+            description = self.describe_image(image_path)
+            # Simple parsing fallback - split description into terms
+            # This is a basic implementation; the prompt template is better
+            words = description.split()
+            positive_terms = [w for w in words if len(w) > 3][:20]  # Basic fallback
+            return {
+                "positive_terms": positive_terms,
+                "negative_terms": [],
+                "must_include": [],
+                "ban_terms": []
+            }
+        
+        prompt = prompt_template
+        
+        payload = {
+            "model": self.model,
+            "prompt": prompt,
+            "images": [image_b64],
+            "stream": False,
+            "format": "json"
+        }
+        
+        logger.info(f"Requesting structured term description from {self.model}...")
+        try:
+            result, metadata = self._make_request_with_retry(payload, parse_json=True, log_progress=True)
+            logger.info(f"  Terms received")
+            logger.info(f"  Provider: {metadata.get('provider')}, Model: {metadata.get('model')}, Fallback: {metadata.get('using_fallback')}")
+            # Store metadata for later retrieval
+            self._last_request_metadata = metadata
+            
+            # Ensure all keys exist with empty lists as defaults
+            return {
+                "positive_terms": result.get("positive_terms", []) or [],
+                "negative_terms": result.get("negative_terms", []) or [],
+                "must_include": result.get("must_include", []) or [],
+                "ban_terms": result.get("ban_terms", []) or []
+            }
+        except Exception as e:
+            logger.error(f"Failed to describe image as terms: {e}")
+            # Store error metadata
+            self._last_request_metadata = {
+                "provider": self.provider,
+                "model": self.model,
+                "using_fallback": self._using_fallback,
+                "success": False,
+                "error": str(e)
+            }
+            # Return empty structure on error
+            return {
+                "positive_terms": [],
+                "negative_terms": [],
+                "must_include": [],
+                "ban_terms": []
+            }
+    
     def recommend_parameters(
         self,
         image_path: str,

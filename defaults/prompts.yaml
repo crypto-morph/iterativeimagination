@@ -87,6 +87,29 @@ describe_image: |
   
   Provide a detailed description.
 
+describe_image_as_terms: |
+  Analyze this image and extract Stable Diffusion prompt terms.
+  
+  Return a JSON object with three arrays:
+  - positive_terms: Array of comma-separated prompt terms that should be in the positive prompt (e.g., ["summer dress", "natural lighting", "relaxed pose"])
+  - negative_terms: Array of terms that should be in the negative prompt (e.g., ["blurry", "deformed", "low quality"])
+  - must_include: Array of terms that MUST be included (e.g., ["same person", "identical facial features"])
+  - ban_terms: Array of terms that MUST be banned (e.g., ["business suit", "formal attire"])
+  
+  Guidelines:
+  - Each term should be a short phrase (1-3 words typically)
+  - Terms should be comma-separated style (like ComfyUI prompts)
+  - Focus on what's visible in the image
+  - For must_include/ban_terms, only include if there are specific requirements
+  
+  Provide your response in JSON format:
+  {{
+    "positive_terms": ["term1", "term2", ...],
+    "negative_terms": ["term1", "term2", ...],
+    "must_include": ["term1", ...],
+    "ban_terms": ["term1", ...]
+  }}
+
 improve_prompts: |
   You are helping improve image generation prompts for Stable Diffusion.
   

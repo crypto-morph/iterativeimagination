@@ -138,7 +138,7 @@ def get_iterations(project_name: str, run_id: str):
 
 @app.route('/api/project/<project_name>/input/describe')
 def describe_input(project_name: str):
-    """Get AIVis description of the input image."""
+    """Get AIVis description of the input image (legacy - returns text)."""
     try:
         project_dir = _safe_project_dir(project_name)
     except Exception:
@@ -191,6 +191,63 @@ def describe_input(project_name: str):
         return jsonify({"ok": True, "description": description}), 200
     except Exception as e:
         return jsonify({"error": f"Failed to describe image: {e}"}), 500
+
+
+@app.route('/api/project/<project_name>/input/describe_terms')
+def describe_input_terms(project_name: str):
+    """Get AIVis description of the input image as structured term lists."""
+    try:
+        project_dir = _safe_project_dir(project_name)
+    except Exception:
+        return jsonify({"error": "Invalid project"}), 400
+    
+    input_path = project_dir / "input" / "input.png"
+    if not input_path.exists():
+        return jsonify({"error": "Input image not found"}), 404
+    
+    # Load AIVis config and initialize client
+    try:
+        aivis_config_path = project_dir / "config" / "AIVis.yaml"
+        if not aivis_config_path.exists():
+            defaults_dir = Path(__file__).parent.parent / "defaults" / "config"
+            aivis_config_path = defaults_dir / "AIVis.yaml"
+        
+        with open(aivis_config_path, 'r', encoding='utf-8') as f:
+            aivis_config = yaml.safe_load(f) or {}
+    except Exception as e:
+        return jsonify({"error": f"Failed to load AIVis config: {e}"}), 500
+    
+    try:
+        import sys
+        from pathlib import Path as _Path
+        sys.path.insert(0, str(_Path(__file__).parent.parent / "src"))
+        from aivis_client import AIVisClient  # noqa: E402
+        
+        prompts_path = project_dir / "config" / "prompts.yaml"
+        if not prompts_path.exists():
+            prompts_path = _Path(__file__).parent.parent / "defaults" / "prompts.yaml"
+        
+        provider = str(aivis_config.get("provider") or "ollama")
+        model = str(aivis_config.get("model") or "qwen3-vl:4b")
+        api_key = aivis_config.get("api_key")
+        fallback_provider = aivis_config.get("fallback_provider")
+        fallback_model = aivis_config.get("fallback_model")
+        max_concurrent = int(aivis_config.get("max_concurrent", 1) or 1)
+        base_url = aivis_config.get("base_url")
+        
+        aivis = AIVisClient(
+            model=model, provider=provider, api_key=api_key,
+            fallback_provider=fallback_provider, fallback_model=fallback_model,
+            prompts_path=prompts_path, max_concurrent=max_concurrent, base_url=base_url,
+        )
+    except Exception as e:
+        return jsonify({"error": f"Failed to initialize AIVis: {e}"}), 500
+    
+    try:
+        terms = aivis.describe_image_as_terms(str(input_path))
+        return jsonify({"ok": True, **terms}), 200
+    except Exception as e:
+        return jsonify({"error": f"Failed to describe image as terms: {e}"}), 500
 
 
 @app.route('/api/project/<project_name>/mask/<mask_name>/prompts')
@@ -403,9 +460,43 @@ def save_aigen_settings(project_name: str):
         return jsonify({"error": f"Failed to save AIGen.yaml: {e}"}), 500
 
 
+def _parse_prompt_to_terms(prompt_str: str) -> List[str]:
+    """Parse a comma-separated prompt string into a list of terms."""
+    if not prompt_str:
+        return []
+    # Split by comma, strip whitespace, filter empty
+    terms = [t.strip() for t in prompt_str.split(",") if t.strip()]
+    return terms
+
+def _compare_term_lists(current: List[str], suggested: List[str]) -> Dict:
+    """Compare two term lists and return suggestions (add/remove).
+    
+    Returns: {
+        "to_add": [terms in suggested but not in current],
+        "to_remove": [terms in current but not in suggested],
+        "unchanged": [terms in both]
+    }
+    """
+    current_lower = {t.lower(): t for t in current}  # Preserve original case
+    suggested_lower = {t.lower(): t for t in suggested}
+    
+    to_add = [suggested_lower[t] for t in suggested_lower if t not in current_lower]
+    to_remove = [current_lower[t] for t in current_lower if t not in suggested_lower]
+    unchanged = [current_lower[t] for t in current_lower if t in suggested_lower]
+    
+    return {
+        "to_add": to_add,
+        "to_remove": to_remove,
+        "unchanged": unchanged
+    }
+
+
 @app.route('/api/project/<project_name>/run/<run_id>/suggest_prompts')
 def suggest_prompts(project_name: str, run_id: str):
-    """Get AIVis suggestions for improving prompts based on latest iteration."""
+    """Get AIVis suggestions for improving prompts based on latest iteration.
+    
+    Returns structured term lists with suggestions (to_add, to_remove).
+    """
     try:
         project_dir = _safe_project_dir(project_name)
     except Exception:
@@ -431,13 +522,16 @@ def suggest_prompts(project_name: str, run_id: str):
     if not image_path.exists():
         return jsonify({"error": "Iteration image not found"}), 404
     
-    # Get current prompts
-    current_positive = iteration_data.get('prompts_used', {}).get('positive', '')
-    current_negative = iteration_data.get('prompts_used', {}).get('negative', '')
+    # Get current prompts as term lists
+    current_positive_str = iteration_data.get('prompts_used', {}).get('positive', '')
+    current_negative_str = iteration_data.get('prompts_used', {}).get('negative', '')
+    current_positive_terms = _parse_prompt_to_terms(current_positive_str)
+    current_negative_terms = _parse_prompt_to_terms(current_negative_str)
+    
     evaluation = iteration_data.get('evaluation', {})
     comparison = iteration_data.get('comparison', {})
     
-    # Initialize AIVis (same pattern as describe_iteration)
+    # Initialize AIVis
     try:
         aivis_config_path = project_dir / "config" / "AIVis.yaml"
         if not aivis_config_path.exists():
@@ -505,8 +599,8 @@ def suggest_prompts(project_name: str, run_id: str):
                     failed_criteria.append(field)
         
         improved_positive, improved_negative, diff_info = improver.improve_prompts(
-            current_positive=current_positive,
-            current_negative=current_negative,
+            current_positive=current_positive_str,
+            current_negative=current_negative_str,
             evaluation=evaluation,
             comparison=comparison,
             failed_criteria=failed_criteria,
@@ -515,16 +609,92 @@ def suggest_prompts(project_name: str, run_id: str):
             original_description=original_desc,
         )
         
+        # Parse improved prompts into term lists
+        suggested_positive_terms = _parse_prompt_to_terms(improved_positive)
+        suggested_negative_terms = _parse_prompt_to_terms(improved_negative)
+        
+        # Compare to get suggestions
+        positive_suggestions = _compare_term_lists(current_positive_terms, suggested_positive_terms)
+        negative_suggestions = _compare_term_lists(current_negative_terms, suggested_negative_terms)
+        
         return jsonify({
             "ok": True,
-            "suggested_positive": improved_positive,
-            "suggested_negative": improved_negative,
-            "current_positive": current_positive,
-            "current_negative": current_negative,
+            "current_positive_terms": current_positive_terms,
+            "current_negative_terms": current_negative_terms,
+            "suggested_positive_terms": suggested_positive_terms,
+            "suggested_negative_terms": suggested_negative_terms,
+            "positive_suggestions": positive_suggestions,
+            "negative_suggestions": negative_suggestions,
             "diff_info": diff_info
         }), 200
     except Exception as e:
         return jsonify({"error": f"Failed to generate suggestions: {e}"}), 500
+
+
+@app.route('/api/project/<project_name>/run/<run_id>/describe_terms/<int:iteration_number>')
+def describe_iteration_terms(project_name: str, run_id: str, iteration_number: int):
+    """Get AIVis description of an iteration image as structured term lists."""
+    try:
+        project_dir = _safe_project_dir(project_name)
+    except Exception:
+        return jsonify({"error": "Invalid project"}), 400
+    
+    run_dir = project_dir / "working" / run_id
+    image_path = run_dir / "images" / f"iteration_{iteration_number}.png"
+    
+    if not image_path.exists():
+        return jsonify({"error": f"Iteration {iteration_number} image not found"}), 404
+    
+    # Load AIVis config
+    try:
+        aivis_config_path = project_dir / "config" / "AIVis.yaml"
+        if not aivis_config_path.exists():
+            defaults_dir = Path(__file__).parent.parent / "defaults" / "config"
+            aivis_config_path = defaults_dir / "AIVis.yaml"
+        
+        with open(aivis_config_path, 'r', encoding='utf-8') as f:
+            aivis_config = yaml.safe_load(f) or {}
+    except Exception as e:
+        return jsonify({"error": f"Failed to load AIVis config: {e}"}), 500
+    
+    # Initialize AIVis client
+    try:
+        import sys
+        from pathlib import Path as _Path
+        sys.path.insert(0, str(_Path(__file__).parent.parent / "src"))
+        from aivis_client import AIVisClient  # noqa: E402
+        
+        prompts_path = project_dir / "config" / "prompts.yaml"
+        if not prompts_path.exists():
+            prompts_path = _Path(__file__).parent.parent / "defaults" / "prompts.yaml"
+        
+        provider = str(aivis_config.get("provider") or "ollama")
+        model = str(aivis_config.get("model") or "qwen3-vl:4b")
+        api_key = aivis_config.get("api_key")
+        fallback_provider = aivis_config.get("fallback_provider")
+        fallback_model = aivis_config.get("fallback_model")
+        max_concurrent = int(aivis_config.get("max_concurrent", 1) or 1)
+        base_url = aivis_config.get("base_url")
+        
+        aivis = AIVisClient(
+            model=model, provider=provider, api_key=api_key,
+            fallback_provider=fallback_provider, fallback_model=fallback_model,
+            prompts_path=prompts_path, max_concurrent=max_concurrent, base_url=base_url,
+        )
+    except Exception as e:
+        return jsonify({"error": f"Failed to initialize AIVis: {e}"}), 500
+    
+    # Get description as terms
+    try:
+        terms = aivis.describe_image_as_terms(str(image_path))
+        return jsonify({
+            "ok": True,
+            "iteration": iteration_number,
+            **terms,
+            "metadata": getattr(aivis, '_last_request_metadata', {})
+        }), 200
+    except Exception as e:
+        return jsonify({"error": f"Failed to describe image: {e}"}), 500
 
 
 @app.route('/api/project/<project_name>/run/<run_id>/describe/<int:iteration_number>')
