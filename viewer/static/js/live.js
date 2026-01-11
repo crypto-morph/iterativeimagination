@@ -727,17 +727,34 @@ function renderLatest(state, iterations) {
       runBtn.classList.add("is-loading");
     }
     // Disable suggestion buttons during run
-    if (generateBtn) generateBtn.disabled = true;
-    if (applyBtn) applyBtn.disabled = true;
+    if (generateBtn) {
+      generateBtn.disabled = true;
+      generateBtn.title = "Wait for run to complete";
+    }
+    if (applyBtn) {
+      applyBtn.disabled = true;
+      applyBtn.title = "Wait for run to complete";
+    }
   } else {
     if (spinner) spinner.classList.add("is-hidden");
     if (runBtn) {
       runBtn.disabled = false;
       runBtn.classList.remove("is-loading");
     }
-    // Enable suggestion buttons when run is complete
-    if (generateBtn && currentIteration) generateBtn.disabled = false;
-    if (applyBtn) applyBtn.disabled = false;
+    // Enable suggestion buttons when run is complete and we have an iteration
+    if (generateBtn) {
+      if (currentIteration) {
+        generateBtn.disabled = false;
+        generateBtn.title = "";
+      } else {
+        generateBtn.disabled = true;
+        generateBtn.title = "No iterations yet - run must complete at least one iteration";
+      }
+    }
+    if (applyBtn) {
+      applyBtn.disabled = true; // Only enabled when suggestions are generated
+      applyBtn.title = "Generate suggestions first";
+    }
   }
   
   setStatus(`${state.status} | iter ${state.current_iteration} | best ${state.best_score} (iter ${state.best_iteration || "-"})`);
