@@ -129,10 +129,8 @@ prompts:
       negative: shirt, dress, business, jacket, trousers
       positive: one peice respectable swimsuit, keep same person
     middle:
-      positive: hawaiian skirt, coconut bra, professional setting, three women, midline,
-        identical facial features, same pose, identical body proportions, background
-        identical, modern office, large window, natural light
-      negative: business suit, shirt
+      positive: wearing uk police uniform, keep same person
+      negative: shirt, dress, business, jacket, trousers
 questions:
 - field: person_clothing_description
   question: Describe the person's clothing in detail. What type of garments are they
