@@ -26,8 +26,8 @@ function getElements() {
   };
 }
 
-// Render a term list
-function renderTermList(container, terms, onRemove, type = "default") {
+// Render a term list with drag-and-drop support
+function renderTermList(container, terms, onRemove, type = "default", onReorder = null) {
   if (!container) return;
   
   container.innerHTML = "";
@@ -40,7 +40,12 @@ function renderTermList(container, terms, onRemove, type = "default") {
   terms.forEach((term, idx) => {
     const li = document.createElement("li");
     li.className = "term-item";
+    li.draggable = true;
+    li.dataset.index = idx;
     li.innerHTML = `
+      <span class="icon is-small has-text-grey" style="cursor: move; margin-right: 0.5rem;">
+        <i class="fas fa-grip-vertical"></i>
+      </span>
       <span class="term-text">${escapeHtml(term)}</span>
       <button class="button is-small is-danger is-outlined delete-term" data-index="${idx}" data-type="${type}">
         <span class="icon is-small"><i class="fas fa-trash"></i></span>
@@ -51,11 +56,75 @@ function renderTermList(container, terms, onRemove, type = "default") {
   
   // Wire delete buttons
   container.querySelectorAll(".delete-term").forEach(btn => {
-    btn.addEventListener("click", () => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
       const idx = parseInt(btn.dataset.index);
       onRemove(idx);
     });
   });
+  
+  // Wire drag-and-drop if onReorder is provided
+  if (onReorder) {
+    let draggedElement = null;
+    let draggedIndex = null;
+    
+    container.querySelectorAll(".term-item").forEach((item, idx) => {
+      item.addEventListener("dragstart", (e) => {
+        draggedElement = item;
+        draggedIndex = idx;
+        item.classList.add("dragging");
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/html", item.innerHTML);
+      });
+      
+      item.addEventListener("dragend", () => {
+        item.classList.remove("dragging");
+        container.querySelectorAll(".term-item").forEach(i => i.classList.remove("drag-over"));
+      });
+      
+      item.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        
+        const afterElement = getDragAfterElement(container, e.clientY);
+        container.querySelectorAll(".term-item").forEach(i => i.classList.remove("drag-over"));
+        if (afterElement == null) {
+          item.classList.add("drag-over");
+        } else {
+          afterElement.classList.add("drag-over");
+        }
+      });
+      
+      item.addEventListener("drop", (e) => {
+        e.preventDefault();
+        if (draggedElement && draggedIndex !== null) {
+          const afterElement = getDragAfterElement(container, e.clientY);
+          const newIndex = afterElement ? parseInt(afterElement.dataset.index) : terms.length - 1;
+          
+          if (draggedIndex !== newIndex) {
+            onReorder(draggedIndex, newIndex);
+          }
+        }
+        container.querySelectorAll(".term-item").forEach(i => i.classList.remove("drag-over"));
+      });
+    });
+  }
+}
+
+// Helper to find element after drag position
+function getDragAfterElement(container, y) {
+  const draggableElements = [...container.querySelectorAll(".term-item:not(.dragging)")];
+  
+  return draggableElements.reduce((closest, child) => {
+    const box = child.getBoundingClientRect();
+    const offset = y - box.top - box.height / 2;
+    
+    if (offset < 0 && offset > closest.offset) {
+      return { offset: offset, element: child };
+    } else {
+      return closest;
+    }
+  }, { offset: Number.NEGATIVE_INFINITY }).element;
 }
 
 // Add a term
@@ -156,6 +225,13 @@ function initPrompts() {
   }
 }
 
+// Reorder terms
+function reorderTerms(list, fromIndex, toIndex) {
+  if (fromIndex === toIndex) return;
+  const [removed] = list.splice(fromIndex, 1);
+  list.splice(toIndex, 0, removed);
+}
+
 // Render functions
 function renderPositiveTerms() {
   const els = getElements();
@@ -166,7 +242,10 @@ function renderPositiveTerms() {
     if (window.runValidation) {
       window.runValidation();
     }
-  }, "positive");
+  }, "positive", (fromIdx, toIdx) => {
+    reorderTerms(positiveTerms, fromIdx, toIdx);
+    renderPositiveTerms();
+  });
   // Trigger validation after initial render too
   if (window.runValidation) {
     window.runValidation();
@@ -182,7 +261,10 @@ function renderNegativeTerms() {
     if (window.runValidation) {
       window.runValidation();
     }
-  }, "negative");
+  }, "negative", (fromIdx, toIdx) => {
+    reorderTerms(negativeTerms, fromIdx, toIdx);
+    renderNegativeTerms();
+  });
   // Trigger validation after initial render too
   if (window.runValidation) {
     window.runValidation();
@@ -195,19 +277,28 @@ function renderMaskTerms() {
     renderTermList(els.mustIncludeList, maskTerms.must_include, (idx) => {
       removeTerm(maskTerms.must_include, idx);
       renderMaskTerms();
-    }, "must_include");
+    }, "must_include", (fromIdx, toIdx) => {
+      reorderTerms(maskTerms.must_include, fromIdx, toIdx);
+      renderMaskTerms();
+    });
   }
   if (els.banTermsList) {
     renderTermList(els.banTermsList, maskTerms.ban_terms, (idx) => {
       removeTerm(maskTerms.ban_terms, idx);
       renderMaskTerms();
-    }, "ban_terms");
+    }, "ban_terms", (fromIdx, toIdx) => {
+      reorderTerms(maskTerms.ban_terms, fromIdx, toIdx);
+      renderMaskTerms();
+    });
   }
   if (els.avoidTermsList) {
     renderTermList(els.avoidTermsList, maskTerms.avoid_terms, (idx) => {
       removeTerm(maskTerms.avoid_terms, idx);
       renderMaskTerms();
-    }, "avoid_terms");
+    }, "avoid_terms", (fromIdx, toIdx) => {
+      reorderTerms(maskTerms.avoid_terms, fromIdx, toIdx);
+      renderMaskTerms();
+    });
   }
 }
 

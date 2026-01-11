@@ -290,9 +290,14 @@ async function saveSettings() {
 // Describe images as terms (but don't overwrite existing prompts)
 async function describeInputTerms(overwrite = false) {
   const container = $("inputDescription");
+  const btn = $("loadFromImageBtn");
   if (!container) return;
   
-  container.innerHTML = '<span class="has-text-grey">Generating description...</span>';
+  if (btn) {
+    btn.disabled = true;
+    btn.classList.add("is-loading");
+  }
+  container.innerHTML = '<span class="has-text-grey"><i class="fas fa-spinner fa-spin"></i> Generating description...</span>';
   
   try {
     const res = await fetch(`/api/project/${project}/input/describe_terms`);
@@ -317,6 +322,11 @@ async function describeInputTerms(overwrite = false) {
     }
   } catch (e) {
     container.innerHTML = `<span class="has-text-danger">Error: ${escapeHtml(e.message)}</span>`;
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.classList.remove("is-loading");
+    }
   }
 }
 
@@ -350,9 +360,22 @@ async function generateSuggestion() {
     return;
   }
   
-  const suggestions = await SuggestionsModule.generateSuggestions(runId);
-  if (suggestions) {
-    SuggestionsModule.renderSuggestions(suggestions, applySuggestion);
+  const btn = $("generateSuggestionBtn");
+  if (btn) {
+    btn.disabled = true;
+    btn.classList.add("is-loading");
+  }
+  
+  try {
+    const suggestions = await SuggestionsModule.generateSuggestions(runId);
+    if (suggestions) {
+      SuggestionsModule.renderSuggestions(suggestions, applySuggestion);
+    }
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.classList.remove("is-loading");
+    }
   }
 }
 
@@ -399,6 +422,12 @@ function applySuggestion(type, action, term) {
 async function savePrompts() {
   const prompts = PromptsModule.getCurrentPrompts();
   const statusEl = $("promptsStatus");
+  const btn = $("savePromptsBtn");
+  
+  if (btn) {
+    btn.disabled = true;
+    btn.classList.add("is-loading");
+  }
   statusEl.textContent = "Saving...";
   
   try {
@@ -419,6 +448,11 @@ async function savePrompts() {
     setTimeout(() => { statusEl.textContent = ""; }, 2000);
   } catch (e) {
     statusEl.textContent = `Error: ${e.message}`;
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.classList.remove("is-loading");
+    }
   }
 }
 
@@ -561,13 +595,18 @@ async function runIteration() {
     return;
   }
   
+  const runBtn = $("runBtn");
+  if (runBtn) {
+    runBtn.disabled = true;
+    runBtn.classList.add("is-loading");
+  }
+  
   // Save prompts first
   await savePrompts();
   
   // Start/continue run
   const maxIter = parseInt($("maxIterInput").value || "20", 10);
   
-  $("runBtn").disabled = true;
   setStatus("Starting run...");
   
   try {
@@ -579,7 +618,10 @@ async function runIteration() {
     const data = await res.json();
     if (!res.ok) {
       setStatus(data.error || "Failed to start");
-      $("runBtn").disabled = false;
+      if (runBtn) {
+        runBtn.disabled = false;
+        runBtn.classList.remove("is-loading");
+      }
       return;
     }
     
@@ -598,7 +640,10 @@ async function runIteration() {
     }, 2000);
   } catch (e) {
     setStatus(`Error: ${e.message}`);
-    $("runBtn").disabled = false;
+    if (runBtn) {
+      runBtn.disabled = false;
+      runBtn.classList.remove("is-loading");
+    }
   }
 }
 
@@ -622,6 +667,9 @@ async function fetchIterations() {
 function renderLatest(state, iterations) {
   const latest = iterations.length ? iterations[iterations.length - 1] : null;
   const spinner = $("spinnerOverlay");
+  const runBtn = $("runBtn");
+  const generateBtn = $("generateSuggestionBtn");
+  const applyBtn = $("applySuggestionBtn");
   
   if (latest) {
     const n = latest.iteration_number;
@@ -642,10 +690,22 @@ function renderLatest(state, iterations) {
   
   if (state.status === "running" || state.status === "starting") {
     if (spinner) spinner.classList.remove("is-hidden");
-    $("runBtn").disabled = true;
+    if (runBtn) {
+      runBtn.disabled = true;
+      runBtn.classList.add("is-loading");
+    }
+    // Disable suggestion buttons during run
+    if (generateBtn) generateBtn.disabled = true;
+    if (applyBtn) applyBtn.disabled = true;
   } else {
     if (spinner) spinner.classList.add("is-hidden");
-    $("runBtn").disabled = false;
+    if (runBtn) {
+      runBtn.disabled = false;
+      runBtn.classList.remove("is-loading");
+    }
+    // Enable suggestion buttons when run is complete
+    if (generateBtn && currentIteration) generateBtn.disabled = false;
+    if (applyBtn) applyBtn.disabled = false;
   }
   
   setStatus(`${state.status} | iter ${state.current_iteration} | best ${state.best_score} (iter ${state.best_iteration || "-"})`);

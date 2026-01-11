@@ -64,6 +64,25 @@
             display: inline-flex;
             align-items: center;
         }
+        .term-item {
+            cursor: move;
+            user-select: none;
+        }
+        .term-item.dragging {
+            opacity: 0.5;
+            background: #e0e0e0;
+        }
+        .term-item.drag-over {
+            border-top: 2px solid #3273dc;
+        }
+        .button.is-loading {
+            pointer-events: none;
+        }
+        .button:disabled,
+        .button.is-disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
         .image-description {
             max-height: 150px;
             overflow-y: auto;
@@ -218,7 +237,7 @@
                             </div>
                         </div>
                         <div class="control mt-2">
-                            <ol id="positiveTermsList" class="term-list" style="list-style: decimal; padding-left: 1.5rem; max-height: 200px; overflow-y: auto;">
+                            <ol id="positiveTermsList" class="term-list sortable-list" style="list-style: decimal; padding-left: 1.5rem; max-height: 200px; overflow-y: auto;">
                                 <li class="has-text-grey is-size-7">No terms</li>
                             </ol>
                         </div>
@@ -235,7 +254,7 @@
                             </div>
                         </div>
                         <div class="control mt-2">
-                            <ol id="negativeTermsList" class="term-list" style="list-style: decimal; padding-left: 1.5rem; max-height: 200px; overflow-y: auto;">
+                            <ol id="negativeTermsList" class="term-list sortable-list" style="list-style: decimal; padding-left: 1.5rem; max-height: 200px; overflow-y: auto;">
                                 <li class="has-text-grey is-size-7">No terms</li>
                             </ol>
                         </div>
@@ -332,43 +351,43 @@
                     <h3 class="title is-5">Mask Terms</h3>
                     <p class="is-size-7 has-text-grey mb-3">Terms that apply only to the masked area</p>
                     
-                    <div class="tabs is-small">
-                        <ul>
-                            <li class="is-active" data-term-tab="mustIncludeTerms"><a>Must Include</a></li>
-                            <li data-term-tab="banTerms"><a>Ban Terms</a></li>
-                            <li data-term-tab="avoidTerms"><a>Avoid Terms</a></li>
-                        </ul>
+                    <!-- Must Include -->
+                    <div class="field mb-4">
+                        <label class="label is-size-7">Must Include</label>
+                        <div class="control">
+                            <input id="addMustIncludeTerm" class="input is-small" type="text" placeholder="Add term (press Enter)">
+                        </div>
+                        <div class="control mt-2">
+                            <ol id="mustIncludeTermsList" class="term-list sortable-list" style="list-style: decimal; padding-left: 1.5rem; max-height: 120px; overflow-y: auto;">
+                                <li class="has-text-grey is-size-7">No terms</li>
+                            </ol>
+                        </div>
                     </div>
                     
-                    <div id="mustIncludeTerms" class="term-tab-content">
-                        <div class="field">
-                            <div class="control">
-                                <input id="addMustIncludeTerm" class="input is-small" type="text" placeholder="Add term (press Enter)">
-                            </div>
+                    <!-- Ban Terms -->
+                    <div class="field mb-4">
+                        <label class="label is-size-7">Ban Terms</label>
+                        <div class="control">
+                            <input id="addBanTerm" class="input is-small" type="text" placeholder="Add term (press Enter)">
                         </div>
-                        <ol id="mustIncludeTermsList" class="term-list" style="list-style: decimal; padding-left: 1.5rem; max-height: 150px; overflow-y: auto;">
-                            <li class="has-text-grey is-size-7">No terms</li>
-                        </ol>
+                        <div class="control mt-2">
+                            <ol id="banTermsList" class="term-list sortable-list" style="list-style: decimal; padding-left: 1.5rem; max-height: 120px; overflow-y: auto;">
+                                <li class="has-text-grey is-size-7">No terms</li>
+                            </ol>
+                        </div>
                     </div>
-                    <div id="banTerms" class="term-tab-content is-hidden">
-                        <div class="field">
-                            <div class="control">
-                                <input id="addBanTerm" class="input is-small" type="text" placeholder="Add term (press Enter)">
-                            </div>
+                    
+                    <!-- Avoid Terms -->
+                    <div class="field">
+                        <label class="label is-size-7">Avoid Terms</label>
+                        <div class="control">
+                            <input id="addAvoidTerm" class="input is-small" type="text" placeholder="Add term (press Enter)">
                         </div>
-                        <ol id="banTermsList" class="term-list" style="list-style: decimal; padding-left: 1.5rem; max-height: 150px; overflow-y: auto;">
-                            <li class="has-text-grey is-size-7">No terms</li>
-                        </ol>
-                    </div>
-                    <div id="avoidTerms" class="term-tab-content is-hidden">
-                        <div class="field">
-                            <div class="control">
-                                <input id="addAvoidTerm" class="input is-small" type="text" placeholder="Add term (press Enter)">
-                            </div>
+                        <div class="control mt-2">
+                            <ol id="avoidTermsList" class="term-list sortable-list" style="list-style: decimal; padding-left: 1.5rem; max-height: 120px; overflow-y: auto;">
+                                <li class="has-text-grey is-size-7">No terms</li>
+                            </ol>
                         </div>
-                        <ol id="avoidTermsList" class="term-list" style="list-style: decimal; padding-left: 1.5rem; max-height: 150px; overflow-y: auto;">
-                            <li class="has-text-grey is-size-7">No terms</li>
-                        </ol>
                     </div>
                 </div>
             </div>
