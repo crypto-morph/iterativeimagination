@@ -170,7 +170,31 @@ def describe_iteration(project_name: str, run_id: str, iteration_number: int):
         sys.path.insert(0, str(_Path(__file__).parent.parent / "src"))
         from aivis_client import AIVisClient  # noqa: E402
         
-        aivis = AIVisClient.from_config(aivis_config, project_dir)
+        # Load prompts path (project-specific or defaults)
+        prompts_path = project_dir / "config" / "prompts.yaml"
+        if not prompts_path.exists():
+            prompts_path = _Path(__file__).parent.parent / "defaults" / "prompts.yaml"
+        
+        # Extract config values
+        provider = str(aivis_config.get("provider") or "ollama")
+        model = str(aivis_config.get("model") or "qwen3-vl:4b")
+        api_key = aivis_config.get("api_key")
+        fallback_provider = aivis_config.get("fallback_provider")
+        fallback_model = aivis_config.get("fallback_model")
+        max_concurrent = int(aivis_config.get("max_concurrent", 1) or 1)
+        base_url = aivis_config.get("base_url")  # For Ollama
+        
+        # Initialize client
+        aivis = AIVisClient(
+            model=model,
+            provider=provider,
+            api_key=api_key,
+            fallback_provider=fallback_provider,
+            fallback_model=fallback_model,
+            prompts_path=prompts_path,
+            max_concurrent=max_concurrent,
+            base_url=base_url,
+        )
     except Exception as e:
         return jsonify({"error": f"Failed to initialize AIVis: {e}"}), 500
     
