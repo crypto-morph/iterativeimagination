@@ -1,8 +1,6 @@
 /* global window */
 // Module for managing prompt term lists
 
-const project = window.__LIVE_PROJECT__;
-
 // State
 let positiveTerms = [];
 let negativeTerms = [];
