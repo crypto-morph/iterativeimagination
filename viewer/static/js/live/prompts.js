@@ -164,7 +164,15 @@ function renderPositiveTerms() {
   renderTermList(els.positiveList, positiveTerms, (idx) => {
     removeTerm(positiveTerms, idx);
     renderPositiveTerms();
+    // Trigger validation after render
+    if (window.runValidation) {
+      window.runValidation();
+    }
   }, "positive");
+  // Trigger validation after initial render too
+  if (window.runValidation) {
+    window.runValidation();
+  }
 }
 
 function renderNegativeTerms() {
@@ -172,7 +180,15 @@ function renderNegativeTerms() {
   renderTermList(els.negativeList, negativeTerms, (idx) => {
     removeTerm(negativeTerms, idx);
     renderNegativeTerms();
+    // Trigger validation after render
+    if (window.runValidation) {
+      window.runValidation();
+    }
   }, "negative");
+  // Trigger validation after initial render too
+  if (window.runValidation) {
+    window.runValidation();
+  }
 }
 
 function renderMaskTerms() {
