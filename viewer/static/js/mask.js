@@ -326,7 +326,29 @@ async function suggestMask() {
       setStatus(`Suggest job ${jobId}${pid}: ${msg}`);
       if (status === "done") {
         await refreshMaskList();
-        await loadExistingMask();
+        // Load the newly generated mask (but suppress the "Loaded existing mask" message)
+        const canvas = $("maskCanvas");
+        const ctx = canvas.getContext("2d");
+        try {
+          const res = await fetch(`/api/project/${project}/input/mask/${encodeURIComponent(maskName)}`);
+          if (res.ok) {
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const img = new Image();
+            await new Promise((resolve, reject) => {
+              img.onload = () => {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                URL.revokeObjectURL(url);
+                resolve();
+              };
+              img.onerror = reject;
+              img.src = url;
+            });
+          }
+        } catch (e) {
+          // Non-fatal - mask might still be loading
+        }
         setStatus(`Suggested mask saved to '${maskName}'. You can refine it with the brush.`);
         return;
       }
