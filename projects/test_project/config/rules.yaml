@@ -95,6 +95,7 @@ masking:
     - person_pose
     - background_identical
     - person_body_proportions
+    - scene_believability
   - name: left
     active_criteria:
     - left_outfit
@@ -118,6 +119,7 @@ masking:
     - person_pose
     - background_identical
     - person_body_proportions
+    - scene_believability
 project:
   max_iterations: 10
   name: test_project
