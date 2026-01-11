@@ -162,9 +162,23 @@
                                 <img id="inputImg" src="/api/project/{{ project_name }}/input/image" alt="Input">
                             </figure>
                             <div class="box mt-2" style="padding: 0.5rem;">
-                                <div class="is-size-7 has-text-weight-bold mb-1">AIVis Description:</div>
+                                <div class="level mb-2">
+                                    <div class="level-left">
+                                        <div class="level-item">
+                                            <div class="is-size-7 has-text-weight-bold">AIVis Description:</div>
+                                        </div>
+                                    </div>
+                                    <div class="level-right">
+                                        <div class="level-item">
+                                            <button id="loadFromImageBtn" class="button is-small is-light">
+                                                <span class="icon"><i class="fas fa-image"></i></span>
+                                                <span>Load from Image</span>
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
                                 <div id="inputDescription" class="image-description">
-                                    <span class="has-text-grey">Click 'Run' to generate description...</span>
+                                    <span class="has-text-grey">Click "Load from Image" to get AIVis terms</span>
                                 </div>
                             </div>
                         </div>
