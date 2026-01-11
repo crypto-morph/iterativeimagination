@@ -287,8 +287,8 @@ async function saveSettings() {
   }
 }
 
-// Describe images as terms
-async function describeInputTerms() {
+// Describe images as terms (but don't overwrite existing prompts)
+async function describeInputTerms(overwrite = false) {
   const container = $("inputDescription");
   if (!container) return;
   
@@ -298,13 +298,20 @@ async function describeInputTerms() {
     const res = await fetch(`/api/project/${project}/input/describe_terms`);
     const data = await res.json();
     if (res.ok) {
-      // Set terms from description
-      PromptsModule.setTermsFromPrompts(
-        (data.positive_terms || []).join(", "),
-        (data.negative_terms || []).join(", ")
-      );
-      container.innerHTML = '<span class="has-text-success"><i class="fas fa-check"></i> Terms loaded from image description</span>';
-      runValidation();
+      if (overwrite) {
+        // Only overwrite if explicitly requested
+        PromptsModule.setTermsFromPrompts(
+          (data.positive_terms || []).join(", "),
+          (data.negative_terms || []).join(", ")
+        );
+        container.innerHTML = '<span class="has-text-success"><i class="fas fa-check"></i> Terms loaded from image description</span>';
+        runValidation();
+      } else {
+        // Just show the description without overwriting
+        const posCount = (data.positive_terms || []).length;
+        const negCount = (data.negative_terms || []).length;
+        container.innerHTML = `<span class="has-text-grey"><i class="fas fa-info-circle"></i> AIVis found ${posCount} positive and ${negCount} negative terms (click to load)</span>`;
+      }
     } else {
       container.innerHTML = `<span class="has-text-danger">${escapeHtml(data.error || "Failed")}</span>`;
     }
@@ -701,6 +708,9 @@ function wireUI() {
   $("applySuggestionBtn").addEventListener("click", () => {
     SuggestionsModule.applyAllSuggestions(applySuggestion);
   });
+  $("loadFromImageBtn").addEventListener("click", () => {
+    describeInputTerms(true); // Overwrite when user explicitly clicks
+  });
   
   // Expose validation function globally so prompts module can call it
   window.runValidation = runValidation;
@@ -727,7 +737,13 @@ async function init() {
   // Load other data
   await loadSettings();
   await loadIterationPrompts();
-  await describeInputTerms();
+  
+  // Don't auto-load AIVis description terms - they would overwrite saved prompts
+  // User can manually trigger it if needed
+  const descContainer = $("inputDescription");
+  if (descContainer) {
+    descContainer.innerHTML = '<span class="has-text-grey">Click "Load from Image" to get AIVis terms</span>';
+  }
   
   console.log("Initialization complete");
 }
