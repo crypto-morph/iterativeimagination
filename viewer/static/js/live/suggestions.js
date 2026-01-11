@@ -6,14 +6,38 @@ let currentSuggestions = null;
 // Render suggestions panel
 function renderSuggestions(suggestions, onApply) {
   const container = document.getElementById("suggestionsPanel");
-  if (!container) return;
-  
-  if (!suggestions) {
-    container.classList.add("is-hidden");
+  if (!container) {
+    console.error("suggestionsPanel element not found");
     return;
   }
   
+  if (!suggestions) {
+    container.classList.add("is-hidden");
+    // Disable apply button if no suggestions
+    const applyBtn = document.getElementById("applySuggestionBtn");
+    if (applyBtn) applyBtn.disabled = true;
+    return;
+  }
+  
+  console.log("Rendering suggestions:", suggestions);
   container.classList.remove("is-hidden");
+  
+  // Show latest iteration description
+  const descContainer = document.getElementById("suggestionIterationDescription");
+  if (descContainer) {
+    const desc = suggestions.latest_iteration_description || "No description available";
+    const iterNum = suggestions.iteration_number || "?";
+    descContainer.innerHTML = `
+      <div class="is-size-7">
+        <strong>Iteration ${iterNum} description:</strong>
+        <p class="mt-2" style="white-space: pre-wrap;">${escapeHtml(desc)}</p>
+      </div>
+    `;
+  }
+  
+  // Enable apply button when suggestions are rendered
+  const applyBtn = document.getElementById("applySuggestionBtn");
+  if (applyBtn) applyBtn.disabled = false;
   
   const posSuggestions = suggestions.positive_suggestions || {};
   const negSuggestions = suggestions.negative_suggestions || {};
