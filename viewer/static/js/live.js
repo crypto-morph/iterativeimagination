@@ -357,20 +357,52 @@ async function describeLatestTerms() {
 async function generateSuggestion() {
   if (!runId) {
     setStatus("No run active. Click 'Run' first.");
+    const placeholder = $("suggestionPlaceholder");
+    if (placeholder) {
+      placeholder.innerHTML = '<span class="has-text-warning">Please start a run first by clicking "Run"</span>';
+    }
     return;
   }
   
   const btn = $("generateSuggestionBtn");
+  const placeholder = $("suggestionPlaceholder");
+  const panel = $("suggestionsPanel");
+  
   if (btn) {
     btn.disabled = true;
     btn.classList.add("is-loading");
   }
   
+  if (placeholder) {
+    placeholder.textContent = "Generating AI suggestions...";
+    placeholder.classList.remove("is-hidden");
+  }
+  
+  if (panel) {
+    panel.classList.add("is-hidden");
+  }
+  
   try {
+    console.log(`Generating suggestions for runId: ${runId}`);
     const suggestions = await SuggestionsModule.generateSuggestions(runId);
+    console.log("Suggestions received:", suggestions);
+    
     if (suggestions) {
       SuggestionsModule.renderSuggestions(suggestions, applySuggestion);
+      if (placeholder) {
+        placeholder.classList.add("is-hidden");
+      }
+    } else {
+      if (placeholder) {
+        placeholder.innerHTML = '<span class="has-text-warning">No suggestions generated. Make sure a run has completed at least one iteration.</span>';
+      }
     }
+  } catch (e) {
+    console.error("Error generating suggestions:", e);
+    if (placeholder) {
+      placeholder.innerHTML = `<span class="has-text-danger">Error: ${escapeHtml(e.message)}</span>`;
+    }
+    setStatus(`Error generating suggestions: ${e.message}`);
   } finally {
     if (btn) {
       btn.disabled = false;
