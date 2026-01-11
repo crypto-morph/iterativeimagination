@@ -35,6 +35,17 @@ acceptance_criteria:
   - identical body proportions
   question: Are the person's body proportions identical to the original image?
   type: boolean
+- edit_strength: high
+  field: scene_believability
+  intent: preserve
+  max: 1
+  min: 0
+  must_include:
+  - anatomically plausible
+  - natural poses
+  - believable scene
+  question: Does the scene maintain the same believability as the original? Are all figures standing/positioned in roughly the same way as the original, with no unrealistic pose changes, deformities, or impossible body positions?
+  type: boolean
 - avoid_terms: []
   ban_terms:
   - business suit
