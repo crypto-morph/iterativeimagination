@@ -226,20 +226,153 @@ async function loadSettings() {
 }
 
 function renderSettings() {
-  const container = $("settingsSummary");
+  const container = $("settingsForm");
   if (!container || !currentSettings) return;
   
+  // Common sampler options
+  const samplerOptions = [
+    "dpmpp_2m_sde_gpu",
+    "dpmpp_2m",
+    "euler",
+    "euler_ancestral",
+    "heun",
+    "dpm_2",
+    "dpm_2_ancestral",
+    "lms",
+    "dpm_fast",
+    "dpm_adaptive",
+    "dpmpp_sde",
+    "dpmpp_2m_sde",
+    "ddim",
+    "uni_pc"
+  ].map(s => `<option value="${s}" ${s === currentSettings.sampler_name ? "selected" : ""}>${s}</option>`).join("");
+  
+  // Common scheduler options
+  const schedulerOptions = [
+    "normal",
+    "karras",
+    "exponential",
+    "sgm_uniform",
+    "simple",
+    "ddim_uniform"
+  ].map(s => `<option value="${s}" ${s === currentSettings.scheduler ? "selected" : ""}>${s}</option>`).join("");
+  
   container.innerHTML = `
-    <table class="table is-narrow is-fullwidth">
-      <tr><td><strong>Denoise:</strong></td><td>${currentSettings.denoise}</td></tr>
-      <tr><td><strong>CFG:</strong></td><td>${currentSettings.cfg}</td></tr>
-      <tr><td><strong>Steps:</strong></td><td>${currentSettings.steps}</td></tr>
-      <tr><td><strong>Sampler:</strong></td><td>${currentSettings.sampler_name}</td></tr>
-      <tr><td><strong>Scheduler:</strong></td><td>${currentSettings.scheduler}</td></tr>
-      <tr><td><strong>Checkpoint:</strong></td><td>${currentSettings.checkpoint}</td></tr>
-      <tr><td><strong>Workflow:</strong></td><td>${currentSettings.workflow}</td></tr>
-    </table>
+    <div class="field">
+      <label class="label is-size-7">Denoise</label>
+      <div class="control">
+        <input id="settingDenoise" class="input is-small" type="number" step="0.01" min="0" max="1" value="${currentSettings.denoise}">
+      </div>
+    </div>
+    <div class="field">
+      <label class="label is-size-7">CFG</label>
+      <div class="control">
+        <input id="settingCfg" class="input is-small" type="number" step="0.1" min="1" max="30" value="${currentSettings.cfg}">
+      </div>
+    </div>
+    <div class="field">
+      <label class="label is-size-7">Steps</label>
+      <div class="control">
+        <input id="settingSteps" class="input is-small" type="number" min="1" max="100" value="${currentSettings.steps}">
+      </div>
+    </div>
+    <div class="field">
+      <label class="label is-size-7">Sampler</label>
+      <div class="control">
+        <div class="select is-small is-fullwidth">
+          <select id="settingSampler" class="is-small">
+            ${samplerOptions}
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="field">
+      <label class="label is-size-7">Scheduler</label>
+      <div class="control">
+        <div class="select is-small is-fullwidth">
+          <select id="settingScheduler" class="is-small">
+            ${schedulerOptions}
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="field">
+      <label class="label is-size-7">Checkpoint</label>
+      <div class="control">
+        <input id="settingCheckpoint" class="input is-small" type="text" value="${escapeHtml(currentSettings.checkpoint)}" readonly>
+      </div>
+      <p class="help is-size-7">Read-only (edit in config/AIGen.yaml)</p>
+    </div>
+    <div class="field">
+      <label class="label is-size-7">Workflow</label>
+      <div class="control">
+        <input id="settingWorkflow" class="input is-small" type="text" value="${escapeHtml(currentSettings.workflow)}" readonly>
+      </div>
+      <p class="help is-size-7">Read-only (edit in config/AIGen.yaml)</p>
+    </div>
   `;
+}
+
+async function saveSettings() {
+  if (!currentSettings) {
+    $("settingsStatus").textContent = "No settings loaded";
+    return;
+  }
+  
+  const statusEl = $("settingsStatus");
+  statusEl.textContent = "Saving...";
+  
+  // Get values from form
+  const denoise = parseFloat($("settingDenoise").value);
+  const cfg = parseFloat($("settingCfg").value);
+  const steps = parseInt($("settingSteps").value);
+  const sampler_name = $("settingSampler").value;
+  const scheduler = $("settingScheduler").value;
+  
+  // Validate
+  if (isNaN(denoise) || denoise < 0 || denoise > 1) {
+    statusEl.textContent = "Invalid denoise value (0-1)";
+    return;
+  }
+  if (isNaN(cfg) || cfg < 1 || cfg > 30) {
+    statusEl.textContent = "Invalid CFG value (1-30)";
+    return;
+  }
+  if (isNaN(steps) || steps < 1 || steps > 100) {
+    statusEl.textContent = "Invalid steps value (1-100)";
+    return;
+  }
+  
+  try {
+    const res = await fetch(`/api/project/${project}/working/aigen/settings`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        denoise,
+        cfg,
+        steps,
+        sampler_name,
+        scheduler
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      statusEl.textContent = data.error || "Failed to save";
+      return;
+    }
+    
+    // Update current settings
+    currentSettings.denoise = denoise;
+    currentSettings.cfg = cfg;
+    currentSettings.steps = steps;
+    currentSettings.sampler_name = sampler_name;
+    currentSettings.scheduler = scheduler;
+    
+    statusEl.textContent = "Saved successfully";
+    setTimeout(() => { statusEl.textContent = ""; }, 2000);
+  } catch (e) {
+    statusEl.textContent = `Error: ${e.message}`;
+  }
 }
 
 // Load iteration prompts
@@ -575,6 +708,7 @@ function wireUI() {
     loadMaskData();
   });
   $("savePromptsBtn").addEventListener("click", saveIterationPrompts);
+  $("saveSettingsBtn").addEventListener("click", saveSettings);
   $("generateSuggestionBtn").addEventListener("click", generateSuggestion);
   $("applySuggestionBtn").addEventListener("click", applySuggestion);
   

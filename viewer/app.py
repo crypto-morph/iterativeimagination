@@ -299,7 +299,7 @@ def get_mask_terms(project_name: str, mask_name: str):
         return jsonify({"error": f"Failed to load terms: {e}"}), 500
 
 
-@app.route('/api/project/<project_name>/working/aigen/settings')
+@app.route('/api/project/<project_name>/working/aigen/settings', methods=['GET'])
 def get_aigen_settings(project_name: str):
     """Get current AIGen settings (denoise, cfg, scheduler, model, etc.)."""
     try:
@@ -330,6 +330,77 @@ def get_aigen_settings(project_name: str):
         }), 200
     except Exception as e:
         return jsonify({"error": f"Failed to load settings: {e}"}), 500
+
+
+@app.route('/api/project/<project_name>/working/aigen/settings', methods=['POST'])
+def save_aigen_settings(project_name: str):
+    """Save AIGen settings to working/AIGen.yaml (creates timestamped backup)."""
+    payload = request.get_json(silent=True) or {}
+    
+    denoise = payload.get("denoise")
+    cfg = payload.get("cfg")
+    steps = payload.get("steps")
+    sampler_name = payload.get("sampler_name")
+    scheduler = payload.get("scheduler")
+    
+    if denoise is None or cfg is None or steps is None or not sampler_name or not scheduler:
+        return jsonify({"error": "Missing required fields: denoise, cfg, steps, sampler_name, scheduler"}), 400
+    
+    try:
+        project_dir = _safe_project_dir(project_name)
+    except Exception:
+        return jsonify({"error": "Invalid project"}), 400
+    
+    working_dir = project_dir / "working"
+    working_dir.mkdir(parents=True, exist_ok=True)
+    path = _working_aigen_path(project_dir)
+    
+    # Ensure working/AIGen.yaml exists by copying config if needed
+    if not path.exists():
+        cfg = project_dir / "config" / "AIGen.yaml"
+        if cfg.exists():
+            path.write_text(cfg.read_text(encoding="utf-8"), encoding="utf-8")
+        else:
+            # Minimal fallback
+            path.write_text(yaml.safe_dump({
+                "parameters": {
+                    "denoise": 0.5,
+                    "cfg": 7.0,
+                    "steps": 25,
+                    "sampler_name": "dpmpp_2m_sde_gpu",
+                    "scheduler": "karras"
+                }
+            }, sort_keys=False), encoding="utf-8")
+    
+    # Backup existing working file
+    import time
+    backup = working_dir / f"AIGen.yaml.bak.{time.strftime('%Y-%m-%d_%H-%M-%S')}"
+    try:
+        backup.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+    except Exception:
+        pass
+    
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        if not isinstance(data, dict):
+            data = {}
+        
+        # Ensure parameters section exists
+        data.setdefault("parameters", {})
+        if not isinstance(data["parameters"], dict):
+            data["parameters"] = {}
+        
+        # Update parameters
+        data["parameters"]["denoise"] = float(denoise)
+        data["parameters"]["cfg"] = float(cfg)
+        data["parameters"]["steps"] = int(steps)
+        data["parameters"]["sampler_name"] = str(sampler_name)
+        data["parameters"]["scheduler"] = str(scheduler)
+        
+        path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+        return jsonify({"ok": True}), 200
+    except Exception as e:
+        return jsonify({"error": f"Failed to save AIGen.yaml: {e}"}), 500
 
 
 @app.route('/api/project/<project_name>/run/<run_id>/suggest_prompts')
