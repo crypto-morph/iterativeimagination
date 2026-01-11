@@ -7,7 +7,7 @@ Commands:
   project create <name>              - Create a new project from defaults
   rules check|suggest                - Lint and AI-suggest acceptance_criteria tags in rules.yaml
   run                               - Run iterative_imagination.py (start/reset/resume)
-  viewer start|stop|status           - Manage the local viewer web app
+  viewer start|stop|restart|status   - Manage the local viewer web app
 """
 
 import argparse
@@ -824,6 +824,14 @@ def viewer_start(host: str = "127.0.0.1", port: int = 5000) -> int:
         return 1
 
 
+def viewer_restart(host: str = "127.0.0.1", port: int = 5000) -> int:
+    """Restart the viewer web app."""
+    print("Restarting viewer...")
+    viewer_stop(port=port)
+    time.sleep(2)
+    return viewer_start(host=host, port=port)
+
+
 def viewer_stop(port: int = 5000) -> int:
     """Stop the viewer web app."""
     viewer_dir = SCRIPT_DIR / "viewer"
@@ -1055,6 +1063,7 @@ Examples:
   iterativectl comfyui start          # Start ComfyUI server
   iterativectl comfyui status         # Check ComfyUI status
   iterativectl viewer start           # Start the viewer web app (http://localhost:5000)
+  iterativectl viewer restart         # Restart the viewer web app
   iterativectl viewer status          # Check viewer status
   iterativectl doctor                 # Check environment health (ComfyUI/Ollama/etc.)
   iterativectl doctor --project myproj  # Also check project config and input image
@@ -1085,6 +1094,7 @@ Examples:
     viewer_subparsers = viewer_parser.add_subparsers(dest='action', help='Action')
     viewer_subparsers.add_parser('start', help='Start viewer web app (http://localhost:5000)')
     viewer_subparsers.add_parser('stop', help='Stop viewer web app')
+    viewer_subparsers.add_parser('restart', help='Restart viewer web app')
     viewer_subparsers.add_parser('status', help='Check viewer status')
     
     # Project commands
@@ -1184,6 +1194,8 @@ Examples:
             return viewer_start()
         elif args.action == 'stop':
             return viewer_stop()
+        elif args.action == 'restart':
+            return viewer_restart()
         elif args.action == 'status':
             return viewer_status()
         else:
