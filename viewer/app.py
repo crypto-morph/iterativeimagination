@@ -569,9 +569,17 @@ def suggest_prompts(project_name: str, run_id: str):
             prompts_path=prompts_path, max_concurrent=max_concurrent, base_url=base_url,
         )
         
-        # Get original description
+        # Get original description (for grounding/context)
         input_path = project_dir / "input" / "input.png"
         original_desc = aivis.describe_image(str(input_path)) if input_path.exists() else None
+        
+        # Get latest iteration description (this is what we're actually analyzing)
+        latest_iteration_desc = None
+        try:
+            latest_iteration_desc = aivis.describe_image(str(image_path))
+        except Exception as e:
+            # If describing latest iteration fails, continue without it
+            pass
         
         # Use prompt improver
         import logging
@@ -599,6 +607,9 @@ def suggest_prompts(project_name: str, run_id: str):
                 if isinstance(result, (int, float)) and result < min_v:
                     failed_criteria.append(field)
         
+        # Use latest iteration description if available (more accurate than original)
+        description_for_improvement = latest_iteration_desc or original_desc
+        
         improved_positive, improved_negative, diff_info = improver.improve_prompts(
             current_positive=current_positive_str,
             current_negative=current_negative_str,
@@ -607,7 +618,7 @@ def suggest_prompts(project_name: str, run_id: str):
             failed_criteria=failed_criteria,
             criteria_defs=criteria_defs,
             criteria_by_field=criteria_by_field,
-            original_description=original_desc,
+            original_description=description_for_improvement,
         )
         
         # Parse improved prompts into term lists
@@ -626,7 +637,9 @@ def suggest_prompts(project_name: str, run_id: str):
             "suggested_negative_terms": suggested_negative_terms,
             "positive_suggestions": positive_suggestions,
             "negative_suggestions": negative_suggestions,
-            "diff_info": diff_info
+            "diff_info": diff_info,
+            "latest_iteration_description": latest_iteration_desc,  # Add the description
+            "iteration_number": iteration_num
         }), 200
     except Exception as e:
         return jsonify({"error": f"Failed to generate suggestions: {e}"}), 500
