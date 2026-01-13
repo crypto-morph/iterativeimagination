@@ -24,6 +24,10 @@ from aivis_client import AIVisClient
 from workflow_manager import WorkflowManager
 from project_manager import ProjectManager
 from prompt_improver import PromptImprover
+from cli.runner import build_run_parser, run_iteration
+from core.services.evaluation_service import EvaluationService
+from core.services.prompt_service import PromptUpdateService
+from core.services.parameter_service import ParameterUpdateService
 
 
 class IterativeImagination:
@@ -88,13 +92,26 @@ class IterativeImagination:
         # Cache for original image description
         self.original_description = None
         
-        # Initialize prompt improver (can be disabled per-project)
-        self.prompt_improver = PromptImprover(
+        # Initialize services
+        self.evaluator = EvaluationService(
+            logger=self.logger,
+            rules=self.rules,
+            aivis=self.aivis,
+            describe_original_image_fn=self._describe_original_image,
+        )
+        prompt_improver = PromptImprover(
             logger=self.logger,
             aivis=self.aivis,
             describe_original_image_fn=self._describe_original_image,
             human_feedback_context=getattr(self, 'human_feedback_context', '')
         )
+        self.prompt_service = PromptUpdateService(
+            logger=self.logger,
+            rules=self.rules,
+            prompt_improver=prompt_improver,
+            describe_original_image_fn=self._describe_original_image,
+        )
+        self.parameter_service = ParameterUpdateService(logger=self.logger, rules=self.rules)
         
         # Track best iteration
         self.best_score = 0
@@ -342,135 +359,21 @@ class IterativeImagination:
         return pos, neg
     
     def _answer_questions(self, image_path: str) -> Dict:
-        """Answer all questions from rules.yaml about the generated image in a single batch request."""
-        self.logger.info("Answering questions about generated image (batch request)...")
-        questions = self.rules.get('questions', [])
-        
-        if not questions:
-            return {"_metadata": {}}
-        
-        # Get original description for comparison questions
-        original_desc = self._describe_original_image()
-        
-        try:
-            # Use batch method to answer all questions in one request
-            answers, metadata = self.aivis.ask_multiple_questions(
-                image_path, 
-                questions, 
-                original_description=original_desc
-            )
-            
-            # Log answers
-            for field, answer in answers.items():
-                self.logger.debug(f"  {field}: {answer}")
-            
-            # Store metadata (single request for all questions)
-            answers["_metadata"] = {
-                "batch_request": metadata  # All questions share the same request metadata
-            }
-            
-            return answers
-        except Exception as e:
-            self.logger.warning(f"  Failed to answer questions in batch: {e}")
-            # Fallback: return defaults for all questions
-            answers = {}
-            for question_def in questions:
-                field = question_def['field']
-                qtype = question_def.get('type', 'string')
-                answers[field] = False if qtype == 'boolean' else (question_def.get('min', 0) if qtype in ['number', 'integer'] else ([] if qtype == 'array' else ""))
-            
-            # Store error metadata
-            answers["_metadata"] = {
-                "batch_request": {
-                    "provider": self.aivis.provider,
-                    "model": self.aivis.model,
-                    "using_fallback": self.aivis._using_fallback,
-                    "success": False,
-                    "error": str(e)
-                }
-            }
-            return answers
-    
-    def _evaluate_acceptance_criteria(self, image_path: str, question_answers: Dict, criteria: Optional[List[Dict]] = None) -> Dict:
-        """Evaluate image against acceptance criteria.
+        """Proxy to EvaluationService."""
+        return self.evaluator.answer_questions(image_path)
 
-        If `criteria` is provided, evaluate only those criteria (useful for per-mask scoped runs).
-        """
-        self.logger.info("Evaluating acceptance criteria...")
-        criteria = criteria if criteria is not None else self.rules.get('acceptance_criteria', [])
-        original_desc = self._describe_original_image()
-        
-        evaluation = self.aivis.evaluate_acceptance_criteria(
-            image_path, original_desc, criteria, question_answers
+    def _evaluate_acceptance_criteria(
+        self,
+        image_path: str,
+        question_answers: Dict,
+        criteria: Optional[List[Dict]] = None,
+    ) -> Dict:
+        """Proxy to EvaluationService."""
+        return self.evaluator.evaluate_acceptance_criteria(
+            image_path,
+            question_answers,
+            criteria=criteria,
         )
-        
-        # Ensure criteria_results has all fields (for the criteria we asked for)
-        criteria_results = evaluation.get('criteria_results', {})
-        for criterion in criteria:
-            field = criterion['field']
-            if field not in criteria_results:
-                criteria_results[field] = False
-        
-        evaluation['criteria_results'] = criteria_results
-
-        # Never trust model-provided overall_score: compute deterministically from criteria_results.
-        def _is_pass(cdef: Dict, value) -> bool:
-            ctype = str(cdef.get("type") or "boolean").lower()
-            if ctype == "boolean":
-                return bool(value) is True
-            if ctype in ("number", "integer", "float"):
-                try:
-                    v = float(value)
-                except Exception:
-                    return False
-                try:
-                    mn = float(cdef.get("min")) if cdef.get("min") is not None else None
-                    mx = float(cdef.get("max")) if cdef.get("max") is not None else None
-                except Exception:
-                    mn, mx = None, None
-                if mn is not None and v < mn:
-                    return False
-                if mx is not None and v > mx:
-                    return False
-                return True
-            if ctype == "string":
-                return isinstance(value, str) and value.strip() != ""
-            if ctype == "array":
-                if not isinstance(value, list):
-                    return False
-                try:
-                    mn = int(cdef.get("min")) if cdef.get("min") is not None else None
-                    mx = int(cdef.get("max")) if cdef.get("max") is not None else None
-                except Exception:
-                    mn, mx = None, None
-                if mn is not None and len(value) < mn:
-                    return False
-                if mx is not None and len(value) > mx:
-                    return False
-                return True
-            return False
-
-        passed = []
-        failed = []
-        for cdef in criteria:
-            if not isinstance(cdef, dict):
-                continue
-            field = cdef.get("field")
-            if not field:
-                continue
-            val = criteria_results.get(field)
-            if _is_pass(cdef, val):
-                passed.append(field)
-            else:
-                failed.append(field)
-
-        total = len(passed) + len(failed)
-        overall = int(round((len(passed) / total) * 100)) if total else 0
-        evaluation["overall_score"] = overall
-        evaluation["passed_fields"] = passed
-        evaluation["failed_fields"] = failed
-        evaluation["criteria_total"] = total
-        return evaluation
     
     def _run_iteration(self, iteration_num: int) -> Optional[Dict]:
         """Run a single iteration of generation and evaluation."""
@@ -1043,11 +946,6 @@ class IterativeImagination:
         # Load current AIGen.yaml
         aigen_config = self.project.load_aigen_config()
         
-        # Adjust parameters based on similarity (kept conservative; main tuning is intent-based below).
-        params = aigen_config.get('parameters', {})
-        current_denoise = params.get('denoise', 0.5)
-        current_cfg = params.get('cfg', 7.0)
-        
         # Improve prompts based on failed criteria (data-driven via rules.yaml tags)
         #
         # If this run is scoped to a particular mask (multi-mask projects), only consider
@@ -1119,7 +1017,6 @@ class IterativeImagination:
                 return [s] if s else []
             return [str(x).strip()]
 
-        # Determine which criteria are failing
         failed_criteria: List[str] = []
         for field, result in criteria_results.items():
             crit = criteria_by_field.get(field)
@@ -1137,138 +1034,15 @@ class IterativeImagination:
                 elif not result:
                     failed_criteria.append(field)
 
-        # Parameter tuning based on intent + edit_strength, not hard-coded field names.
-        failed_change = []
-        failed_preserve = []
-        for field in failed_criteria:
-            crit = criteria_by_field.get(field, {})
-            intent = (crit.get('intent') or 'preserve').strip().lower()
-            if intent == 'change':
-                failed_change.append(field)
-            else:
-                failed_preserve.append(field)
-
-        # Per-project bounds/caps (optional)
-        proj_cfg = (self.rules.get("project") or {}) if isinstance(self.rules, dict) else {}
-        try:
-            denoise_min = float(proj_cfg.get("denoise_min", 0.20))
-        except Exception:
-            denoise_min = 0.20
-        try:
-            denoise_max = float(proj_cfg.get("denoise_max", 0.80))
-        except Exception:
-            denoise_max = 0.80
-        try:
-            cfg_max = float(proj_cfg.get("cfg_max", 12.0))
-        except Exception:
-            cfg_max = 12.0
-        try:
-            cfg_min = float(proj_cfg.get("cfg_min", 4.0))
-        except Exception:
-            cfg_min = 4.0
-
-        # If we're *not* inpainting (no mask), cap "edit strength" more aggressively.
-        # Rationale: raising denoise on full-frame img2img causes global drift and makes targeted edits unreliable.
-        # For local edits, we want the user to provide input/mask.png so we can switch to the inpaint workflow.
-        mask_used = bool(iteration_result.get("mask_used"))
-        if not mask_used:
-            try:
-                denoise_max_no_mask = float(proj_cfg.get("denoise_max_no_mask", 0.55))
-            except Exception:
-                denoise_max_no_mask = 0.55
-            try:
-                cfg_max_no_mask = float(proj_cfg.get("cfg_max_no_mask", 9.0))
-            except Exception:
-                cfg_max_no_mask = 9.0
-            denoise_max = min(denoise_max, denoise_max_no_mask)
-            cfg_max = min(cfg_max, cfg_max_no_mask)
-
-        # Heuristic: if most criteria are preserve, cap denoise/cfg harder to prevent "wandering".
-        # BUT: when inpainting (mask active), don't apply these caps - the mask protects the rest of the image.
-        intents = [(c.get("intent") or "preserve").strip().lower() for c in criteria_defs if isinstance(c, dict)]
-        n_preserve = sum(1 for x in intents if x != "change")
-        n_change = sum(1 for x in intents if x == "change")
-        preserve_heavy = bool(proj_cfg.get("preserve_heavy")) or (n_preserve >= 3 and n_change <= 2)
-        # Important: preserve-heavy tasks still need enough edit strength to achieve the *one* change goal.
-        # So we only tighten caps when preserve criteria are failing (i.e. we're drifting).
-        # BUT: skip this cap when inpainting is active - masks allow higher edit strength safely.
-        if preserve_heavy and failed_preserve and not mask_used:
-            denoise_max = min(denoise_max, 0.62)
-            cfg_max = min(cfg_max, 8.5)
-
-        cur_d = float(params.get("denoise", current_denoise) or current_denoise)
-        cur_cfg = float(params.get("cfg", current_cfg) or current_cfg)
-
-        # Priority: if we have change failures, prioritize those (increase denoise to make the change happen).
-        # Only reduce denoise for preserve failures if we DON'T have change failures.
-        if failed_change:
-            if not mask_used:
-                self.logger.warning(
-                    "Change goals are failing but no mask is in use. "
-                    "For precise edits, add projects/<name>/input/mask.png (white=edit, black=keep) "
-                    "so the runner can switch to an inpaint workflow automatically. "
-                    f"Meanwhile, keeping conservative no-mask caps: denoise<= {denoise_max:.2f}, cfg<= {cfg_max:.1f}."
-                )
-            # Change failures with preserve OK: allow a bit more freedom, but keep within caps.
-            max_strength = max(_strength_value(criteria_by_field[f].get('edit_strength')) for f in failed_change)
-            
-            # Check how many consecutive iterations this change goal has been failing
-            # This allows us to be more aggressive if we've been stuck for a while
-            iteration_num = iteration_result.get('iteration', 1)
-            consecutive_failures = 0
-            if iteration_num > 1:
-                # Try to count consecutive failures by checking previous iterations
-                # For now, use iteration number as a proxy (if we're on iteration 3+, we've failed at least 2 times)
-                consecutive_failures = max(0, iteration_num - 1)
-            
-            # Base step size - bigger for stubborn edits (e.g. removing garments).
-            base_delta = 0.06 + 0.02 * max_strength
-            base_cfg_delta = 0.5 + 0.5 * max_strength
-            
-            # If we've failed multiple times, be more aggressive (but cap the multiplier)
-            # After 2+ failures, increase step size by up to 2x
-            failure_multiplier = min(2.0, 1.0 + (consecutive_failures * 0.3))
-            delta = base_delta * failure_multiplier
-            cfg_delta = base_cfg_delta * failure_multiplier
-            
-            # If we're already at high values and still failing, try a different approach:
-            # Instead of just increasing, we could try a "jump" to a different range
-            # For now, we'll just be more aggressive with increments
-            if cur_d >= 0.85 and cur_cfg >= 12.0:
-                # We're already very high - maybe the issue is seed variance or prompt quality
-                # Try a bigger jump to break out of the local minimum
-                delta = max(delta, 0.05)  # At least 0.05 increment even if multiplier is small
-                cfg_delta = max(cfg_delta, 1.5)  # At least 1.5 cfg increment
-                self.logger.warning(
-                    f"High denoise/cfg ({cur_d:.2f}/{cur_cfg:.1f}) but change still failing. "
-                    f"Trying larger increments (Δdenoise={delta:.3f}, Δcfg={cfg_delta:.1f}) to break out of local minimum."
-                )
-            
-            # If change is failing and preserve is OK, we should steadily increase denoise until the change lands,
-            # while staying within the project caps.
-            params["denoise"] = min(denoise_max, max(denoise_min, cur_d + delta))
-
-            params["cfg"] = min(cfg_max, max(cfg_min, cur_cfg + cfg_delta))
-            self.logger.info(
-                f"Change goals failing ({failed_change}, {consecutive_failures} consecutive) - "
-                f"increasing denoise to {params['denoise']:.2f} (Δ{delta:.3f}), "
-                f"cfg to {params['cfg']:.1f} (Δ{cfg_delta:.1f}) "
-                f"(caps: denoise<= {denoise_max:.2f}, cfg<= {cfg_max:.1f})"
-            )
-        elif failed_preserve:
-            # Preserve failures (and no change failures): pull closer to original immediately.
-            max_strength = max(_strength_value(criteria_by_field[f].get('edit_strength')) for f in failed_preserve)
-            delta = 0.05 + 0.02 * max_strength
-            params["denoise"] = max(denoise_min, cur_d - delta)
-            params["cfg"] = max(cfg_min, cur_cfg - (0.5 + 0.5 * max_strength))
-            self.logger.info(
-                f"Preserve goals failing ({failed_preserve}) - decreasing denoise to {params['denoise']:.2f}, cfg to {params['cfg']:.1f}"
-            )
-
-        # If we diverged too far, pull back regardless.
-        if similarity <= 0.30:
-            params["denoise"] = max(denoise_min, float(params.get("denoise", cur_d)) - 0.05)
-            self.logger.info(f"Images too different (similarity={similarity:.2f}) - reducing denoise to {params['denoise']:.2f}")
+        self.parameter_service.update_parameters(
+            aigen_config=aigen_config,
+            iteration_result=iteration_result,
+            evaluation=evaluation,
+            comparison=comparison,
+            criteria_defs=criteria_defs,
+            criteria_by_field=criteria_by_field,
+            failed_criteria=failed_criteria,
+        )
         
         # Get AI-driven parameter recommendations (optional, can be enabled per-project)
         aivis_param_recommendations_enabled = proj_cfg.get("aivis_parameter_recommendations", False)
@@ -1370,51 +1144,18 @@ class IterativeImagination:
         improve_prompts_enabled = proj_cfg.get("improve_prompts", False)
         
         if failed_criteria and improve_prompts_enabled:
-            self.logger.info(f"Improving prompts based on failed criteria: {failed_criteria}")
-            
-            # Get original description for grounding
-            try:
-                original_desc = self._describe_original_image()
-            except Exception:
-                original_desc = None
-            
-            current_positive = aigen_config.get('prompts', {}).get('positive', '')
-            current_negative = aigen_config.get('prompts', {}).get('negative', '')
-            
-            # Use the prompt improver module
-            improved_positive, improved_negative, diff_info = self.prompt_improver.improve_prompts(
-                current_positive=current_positive,
-                current_negative=current_negative,
+            changed = self.prompt_service.maybe_improve_prompts(
+                aigen_config=aigen_config,
                 evaluation=evaluation,
                 comparison=comparison,
                 failed_criteria=failed_criteria,
                 criteria_defs=criteria_defs,
                 criteria_by_field=criteria_by_field,
-                original_description=original_desc,
             )
-            
-            # Log the changes
-            if diff_info.get("must_include_terms"):
-                self.logger.info(f"  Tag must_include terms (from failed criteria): {diff_info['must_include_terms']}")
-            if diff_info.get("ban_terms"):
-                self.logger.info(f"  Tag ban_terms (from failed criteria): {diff_info['ban_terms']}")
-            if diff_info.get("avoid_terms"):
-                self.logger.info(f"  Tag avoid_terms (from failed criteria): {diff_info['avoid_terms']}")
-            
-            pos_diff = diff_info.get("pos_diff", {})
-            neg_diff = diff_info.get("neg_diff", {})
-            if pos_diff.get("added") or pos_diff.get("removed"):
-                self.logger.info(f"  Positive prompt changes: +{pos_diff['added']} -{pos_diff['removed']}")
-            if neg_diff.get("added") or neg_diff.get("removed"):
-                self.logger.info(f"  Negative prompt changes: +{neg_diff['added']} -{neg_diff['removed']}")
-            
-            # Save improved prompts
-            if 'prompts' not in aigen_config:
-                aigen_config['prompts'] = {}
-            aigen_config['prompts']['positive'] = improved_positive
-            aigen_config['prompts']['negative'] = improved_negative
-        elif failed_criteria and not improve_prompts_enabled:
-            self.logger.info(f"Prompt improvement disabled (project.improve_prompts=false). Keeping prompts unchanged.")
+            if not changed:
+                self.logger.info("Prompt service skipped updates (conditions not met).")
+        elif failed_criteria:
+            self.logger.info("Prompt improvement disabled (project.improve_prompts=false). Keeping prompts unchanged.")
         # Save updated AIGen.yaml
         self.project.save_aigen_config(aigen_config)
     
@@ -1692,137 +1433,9 @@ class IterativeImagination:
 
 def main():
     """Main entry point."""
-    parser = argparse.ArgumentParser(
-        description="Iterative Imagination - AI-powered image generation with iterative improvement"
-    )
-    parser.add_argument('--project', type=str, help='Project name (uses projects/{NAME}/config/rules.yaml)')
-    parser.add_argument('--rules', type=str, help='Path to rules.yaml (alternative to --project)')
-    parser.add_argument('--input', type=str, help='Path to input image (if not using project structure)')
-    parser.add_argument('--dry-run', action='store_true', help='Validate configs but don\'t run')
-    parser.add_argument('--verbose', action='store_true', help='Enable debug logging')
-    parser.add_argument('--resume-from', type=int, help='Resume from a specific iteration number (or use checkpoint if not specified)')
-    # New naming (preferred)
-    parser.add_argument('--seed-from-ranking', type=str, help='Seed from a prior run human ranking (RUN_ID or "latest")')
-    parser.add_argument('--seed-ranking-mode', type=str, default="rank1", help='Seeding mode: rank1|top3|top5 (default: rank1)')
-    # Backwards compatible alias (deprecated)
-    parser.add_argument('--seed-from-human', type=str, help='(deprecated) alias for --seed-from-ranking')
-    parser.add_argument(
-        '--reset',
-        action='store_true',
-        help='Reset run state for this project (deletes working/checkpoint.json and resets working/AIGen.yaml from config)'
-    )
-    
+    parser = build_run_parser()
     args = parser.parse_args()
-    
-    # Determine project name
-    if args.project:
-        project_name = args.project
-    elif args.rules:
-        rules_path = Path(args.rules)
-        if 'projects' in rules_path.parts:
-            project_idx = rules_path.parts.index('projects')
-            if project_idx + 1 < len(rules_path.parts):
-                project_name = rules_path.parts[project_idx + 1]
-            else:
-                print("Error: Could not determine project name from rules path", file=sys.stderr)
-                sys.exit(1)
-        else:
-            print("Error: Rules path must be within projects/ directory", file=sys.stderr)
-            sys.exit(1)
-    else:
-        print("Error: Must specify --project or --rules", file=sys.stderr)
-        parser.print_help()
-        sys.exit(1)
-    
-    # Handle --reset BEFORE creating IterativeImagination to avoid stale input_image_path
-    if args.reset:
-        from src.project_manager import ProjectManager
-        temp_project = ProjectManager(project_name)
-        
-        # Remove checkpoint
-        chk = temp_project.get_checkpoint_path()
-        try:
-            if chk.exists():
-                chk.unlink()
-                print(f"Reset: removed {chk}")
-        except Exception as e:
-            print(f"Warning: failed to remove checkpoint {chk}: {e}", file=sys.stderr)
-
-        # Archive any legacy flat iteration_* files into a timestamped run folder so old runs stay tidy.
-        try:
-            legacy_dir = temp_project.project_root / "working"
-            legacy_files = list(legacy_dir.glob("iteration_*.*"))
-            if legacy_files:
-                run_id = temp_project.create_run_id()
-                temp_project.ensure_run_directories(run_id)
-                run_root = temp_project.get_run_root(run_id)
-
-                def _dest_for(p: Path) -> Path:
-                    name = p.name
-                    if name.endswith(".png"):
-                        return run_root / "images" / name
-                    if name.endswith("_questions.json"):
-                        return run_root / "questions" / name
-                    if name.endswith("_evaluation.json"):
-                        return run_root / "evaluation" / name
-                    if name.endswith("_comparison.json"):
-                        return run_root / "comparison" / name
-                    if name.endswith("_metadata.json"):
-                        return run_root / "metadata" / name
-                    return run_root / name
-
-                for p in legacy_files:
-                    dest = _dest_for(p)
-                    p.rename(dest)
-                print(f"Reset: archived {len(legacy_files)} legacy iteration files into {run_root}")
-        except Exception as e:
-            print(f"Warning: failed to archive legacy iteration files: {e}", file=sys.stderr)
-
-        # Reset working/AIGen.yaml to match config/AIGen.yaml if present, otherwise rely on defaults loader.
-        working_aigen = temp_project.project_root / "working" / "AIGen.yaml"
-        config_aigen = temp_project.project_root / "config" / "AIGen.yaml"
-        try:
-            if config_aigen.exists():
-                import shutil as _shutil
-                _shutil.copy2(config_aigen, working_aigen)
-                print(f"Reset: restored {working_aigen} from {config_aigen}")
-            else:
-                # Ensure loader will rebuild working/AIGen.yaml from defaults on next run.
-                if working_aigen.exists():
-                    working_aigen.unlink()
-                    print(f"Reset: removed {working_aigen} (will be recreated from defaults)")
-        except Exception as e:
-            print(f"Warning: failed to reset working AIGen.yaml: {e}", file=sys.stderr)
-
-        # Remove progress.png so the run starts from the original input.png
-        progress_path = temp_project.project_root / "input" / "progress.png"
-        try:
-            if progress_path.exists():
-                progress_path.unlink()
-                print(f"Reset: removed {progress_path} (will start from original input.png)")
-        except Exception as e:
-            print(f"Warning: failed to remove progress.png: {e}", file=sys.stderr)
-
-    try:
-        app = IterativeImagination(project_name, verbose=args.verbose)
-
-            # Note: we deliberately do NOT delete iteration_*.png/json so you keep history.
-            # If you want a totally clean slate, delete projects/{project}/working/iteration_* manually.
-
-        seed_run = args.seed_from_ranking or args.seed_from_human
-        success = app.run(
-            dry_run=args.dry_run,
-            resume_from=args.resume_from,
-            seed_from_ranking=seed_run,
-            seed_ranking_mode=args.seed_ranking_mode,
-        )
-        sys.exit(0 if success else 1)
-    except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
-        if args.verbose:
-            import traceback
-            traceback.print_exc()
-        sys.exit(1)
+    run_iteration(args, IterativeImagination, parser)
 
 
 if __name__ == '__main__':

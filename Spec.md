@@ -50,6 +50,26 @@ Projects live under `projects/` and are self-contained:
 
 Defaults live under `defaults/` and are copied into new projects.
 
+### Core runtime layout
+
+The runtime logic now lives under `src/core/`:
+
+- `core/config/project_paths.py`: path helpers + directory scaffolding
+- `core/config/config_store.py`: load/save/merge for `rules.yaml`, `AIGen.yaml`, `AIVis.yaml`
+- `core/config/prompt_library.py`: layered prompt template loading (baseline → defaults → repo → project)
+- `core/services/project_state.py`: run history + checkpoint persistence
+- `core/services/evaluation_service.py`: wraps AIVis question answering and acceptance scoring
+- `core/services/prompt_service.py`: orchestrates prompt improvements via `PromptImprover`
+- `core/services/parameter_service.py`: encapsulates denoise/CFG tuning heuristics
+
+`IterativeImagination` consumes these services, keeping the main loop focused on orchestration instead of implementation detail.
+
+### CLI structure
+
+- `cli/runner.py` exposes `build_run_parser` + `run_iteration`, shared by both entry points.
+- `iterative_imagination.py` is a thin wrapper around the shared runner.
+- `iterativectl run` calls the same runner, so CLI flags/reset behavior stay in sync.
+
 ## Configuration formats
 
 ### `rules.yaml`

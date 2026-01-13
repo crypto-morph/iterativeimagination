@@ -18,6 +18,7 @@ import yaml
 from PIL import Image
 import io
 
+from core.config.prompt_library import load_prompt_templates
 
 class RateLimitError(Exception):
     """Raised when rate limit is exceeded and cannot be retried."""
@@ -83,58 +84,10 @@ class AIVisClient:
         return self._last_request_metadata
     
     def _load_prompts(self, prompts_path: Path = None) -> Dict[str, str]:
-        """Load prompts from YAML file.
-
-        We support project-specific prompt overrides. If a project file is missing
-        newly-added prompt keys, we merge from repo defaults so prompts are never empty.
-        """
-        # __file__ is in src/, so go up one level to repo root
-        repo_root = Path(__file__).parent.parent
-
-        # Built-in baseline (ultimate fallback)
-        baseline: Dict[str, str] = {
-                "ask_question": "Answer this question about the image: {question}\n\nQuestion type: {type_info}{enum_info}{min_max_info}\n\nProvide your answer in JSON format matching the question type:\n{{\n    \"answer\": <your_answer_here>\n}}\n\nFor boolean questions, use true/false.\nFor number/integer questions, provide a numeric value.\nFor string questions, provide a text description.\nFor array questions, provide a JSON array.",
-                "evaluate_acceptance_criteria": "Evaluate this GENERATED image against acceptance criteria, comparing it to the ORIGINAL image.\n\nORIGINAL IMAGE DESCRIPTION:\n{original_description}\n\nQUESTION ANSWERS (for context):\n{questions_summary}\n\nACCEPTANCE CRITERIA:\n{criteria_text}\n\nFor each criterion, determine if it passes (true/false or within min/max range).\nThen calculate overall score: (passed_criteria / total_criteria) * 100\n\nProvide your evaluation in JSON format:\n{{\n    \"overall_score\": <0-100>,\n    \"criteria_results\": {{\n        \"<field1>\": <true/false or value>,\n        \"<field2>\": <true/false or value>,\n        ...\n    }}\n}}",
-                "compare_images": "Compare these two images and analyze the differences.\n\nFocus on:\n1. Similarity score (0.0 = completely different, 1.0 = identical)\n2. What differences exist? (clothing, pose, features, background, proportions)\n3. Overall analysis\n\nProvide your comparison in JSON format:\n{{\n    \"similarity_score\": <0.0-1.0>,\n    \"differences\": [\"difference1\", \"difference2\", ...],\n    \"analysis\": \"detailed analysis text\"\n}}",
-                "describe_image": "Describe this image in detail. Focus on:\n1. Main subject (person, object, scene)\n2. If person: appearance, pose, clothing\n3. Background/setting\n4. Overall composition and notable details\n\nProvide a detailed description.",
-                "improve_prompts": "You are helping improve image generation prompts for Stable Diffusion.\n\nCurrent positive prompt: {current_positive}\nCurrent negative prompt: {current_negative}\n\nEvaluation results:\n- Overall score: {overall_score}%\n- Failed criteria: {failed_criteria}\n\nImage comparison:\n- Similarity: {similarity_score}\n- Differences: {differences}\n- Analysis: {analysis}\n\nRules to achieve:\n{rules_text}\n\nSuggest improved positive and negative prompts that:\n1. Address the failed criteria\n2. Maintain what's working well\n3. Better achieve the rules\n4. Follow Stable Diffusion prompt best practices\n\nProvide your suggestions in JSON format:\n{{\n    \"positive\": \"<improved positive prompt>\",\n    \"negative\": \"<improved negative prompt>\"\n}}"
-
-        }
-
-        # Merge repo defaults/prompts.yaml then repo_root/prompts.yaml (if present)
-        # so new prompt keys are available even if a project override file is stale.
-        merged: Dict[str, str] = dict(baseline)
-
-        defaults_path = repo_root / "defaults" / "prompts.yaml"
-        if defaults_path.exists():
-            with open(defaults_path, "r", encoding="utf-8") as f:
-                loaded = yaml.safe_load(f) or {}
-                if isinstance(loaded, dict):
-                    merged.update(loaded)
-
-        canonical_path = repo_root / "prompts.yaml"
-        if canonical_path.exists():
-            with open(canonical_path, "r", encoding="utf-8") as f:
-                loaded = yaml.safe_load(f) or {}
-                if isinstance(loaded, dict):
-                    merged.update(loaded)
-
-        # If no explicit prompts_path, default to repo_root/prompts.yaml or defaults
-        if prompts_path is None:
-            prompts_path = canonical_path if canonical_path.exists() else defaults_path
-
-        # Finally, merge explicit prompts file overrides (project-specific)
-        try:
-            if prompts_path and Path(prompts_path).exists():
-                with open(prompts_path, "r", encoding="utf-8") as f:
-                    loaded = yaml.safe_load(f) or {}
-                    if isinstance(loaded, dict):
-                        merged.update(loaded)
-        except Exception:
-            # If prompt loading fails, fall back to merged baseline
-            pass
-
-        return merged
+        """Load prompts from YAML file with layered fallbacks."""
+        repo_root = Path(__file__).resolve().parents[2]
+        defaults_root = repo_root / "defaults"
+        return load_prompt_templates(prompts_path=prompts_path, defaults_root=defaults_root, repo_root=repo_root)
     
     def _image_to_base64(self, image_path: str, max_size: int = 1024) -> str:
         """Convert image to base64, optionally resizing."""

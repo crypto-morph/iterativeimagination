@@ -30,6 +30,12 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 DEFAULTS_DIR = SCRIPT_DIR / "defaults"
 PROJECTS_DIR = SCRIPT_DIR / "projects"
 
+# Ensure repo src/ is importable for shared modules
+sys.path.insert(0, str(SCRIPT_DIR / "src"))
+
+from cli.runner import build_run_parser, run_iteration  # noqa: E402
+from iterative_imagination import IterativeImagination  # noqa: E402
+
 # Find ComfyUI directory - check environment variable first, then common locations
 def find_comfyui_dir():
     """Find ComfyUI installation directory."""
@@ -325,13 +331,8 @@ def rules_run(args):
     """Run rules_check.py with friendly iterativectl subcommands."""
     rules_check_path = SCRIPT_DIR / "src" / "rules_checker.py"
     if not rules_check_path.exists():
-        # Fall back to the legacy wrapper if present
-        legacy = SCRIPT_DIR / "rules_check.py"
-        if legacy.exists():
-            rules_check_path = legacy
-        else:
-            print(f"✗ rules checker not found: {rules_check_path}")
-            return 1
+        print(f"✗ rules checker not found: {rules_check_path}")
+        return 1
 
     # Prefer the ComfyUI venv python if available, so dependencies (Pillow, requests, etc.) are present.
     venv_python = COMFYUI_DIR / "venv" / "bin" / "python"
@@ -381,49 +382,6 @@ def rules_run(args):
         return subprocess.call(cmd, cwd=str(SCRIPT_DIR))
     except Exception as e:
         print(f"✗ Error running rules checker: {e}")
-        return 1
-
-
-def run_imagination(args):
-    """Run iterative_imagination.py using the ComfyUI venv python if available."""
-    script_path = SCRIPT_DIR / "iterative_imagination.py"
-    if not script_path.exists():
-        print(f"✗ iterative_imagination.py not found: {script_path}")
-        return 1
-
-    # Prefer the ComfyUI venv python if available, so dependencies are present
-    venv_python = COMFYUI_DIR / "venv" / "bin" / "python"
-    python_cmd = str(venv_python) if venv_python.exists() else sys.executable
-
-    cmd = [python_cmd, str(script_path)]
-
-    if args.project:
-        cmd += ["--project", args.project]
-    if args.rules:
-        cmd += ["--rules", args.rules]
-    if args.input:
-        cmd += ["--input", args.input]
-
-    if args.reset:
-        cmd += ["--reset"]
-    if args.resume_from is not None:
-        cmd += ["--resume-from", str(args.resume_from)]
-    if getattr(args, "seed_from_ranking", None):
-        cmd += ["--seed-from-ranking", str(args.seed_from_ranking)]
-    if getattr(args, "seed_ranking_mode", None):
-        cmd += ["--seed-ranking-mode", str(args.seed_ranking_mode)]
-    # Backwards compatible alias
-    if getattr(args, "seed_from_human", None):
-        cmd += ["--seed-from-human", str(args.seed_from_human)]
-    if args.dry_run:
-        cmd += ["--dry-run"]
-    if args.verbose:
-        cmd += ["--verbose"]
-
-    try:
-        return subprocess.call(cmd, cwd=str(SCRIPT_DIR))
-    except Exception as e:
-        print(f"✗ Error running iterative_imagination.py: {e}")
         return 1
 
 
@@ -921,6 +879,167 @@ def viewer_stop(port: int = 5000) -> int:
         return 1
 
 
+def gallery_status(host: str = "localhost", port: int = 5051) -> int:
+    """Check and display gallery status."""
+    util_dir = SCRIPT_DIR / "utility"
+    pid_file = util_dir / ".gallery.pid"
+    pid = _read_pid_file(pid_file)
+    is_running = check_port_open(host=host, port=port)
+    if is_running:
+        extra = f", PID: {pid}" if _pid_is_running(pid) else ""
+        print(f"✓ Gallery is running on http://{host}:{port}{extra}")
+        return 0
+    if _pid_is_running(pid):
+        print(f"⚠ Gallery process found (PID: {pid}) but port {port} is not responding")
+        return 1
+    print("✗ Gallery is not running")
+    return 1
+
+
+def gallery_start(host: str = "127.0.0.1", port: int = 5051) -> int:
+    """Start the ComfyUI output gallery web app."""
+    util_dir = SCRIPT_DIR / "utility"
+    util_dir.mkdir(parents=True, exist_ok=True)
+
+    gallery_py = util_dir / "comfyui_gallery.py"
+    legacy_gallery_py = SCRIPT_DIR / "comfyui_gallery.py"
+    if not gallery_py.exists() and legacy_gallery_py.exists():
+        gallery_py = legacy_gallery_py
+
+    if not gallery_py.exists():
+        print(f"✗ Gallery app not found: {gallery_py}")
+        return 1
+
+    if check_port_open(host=host, port=port) or check_port_open(host="localhost", port=port):
+        print(f"✓ Gallery is already running on http://{host}:{port}")
+        return 0
+
+    venv_python = COMFYUI_DIR / "venv" / "bin" / "python"
+    python_cmd = str(venv_python) if venv_python.exists() else sys.executable
+
+    log_file = util_dir / "gallery.log"
+    pid_file = util_dir / ".gallery.pid"
+
+    print("Starting gallery...")
+    try:
+        with open(log_file, "w") as log:
+            process = subprocess.Popen(
+                [python_cmd, str(gallery_py), "--host", host, "--port", str(port)],
+                cwd=str(util_dir if gallery_py.parent == util_dir else SCRIPT_DIR),
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+        pid_file.write_text(str(process.pid), encoding="utf-8")
+
+        print("  Waiting for gallery to initialise...")
+        max_wait = 10
+        waited = 0
+        while waited < max_wait:
+            time.sleep(1)
+            waited += 1
+            if check_port_open(host="localhost", port=port) or check_port_open(host=host, port=port):
+                print(f"✓ Gallery started successfully (PID: {process.pid})")
+                print(f"  Access at: http://localhost:{port}")
+                print(f"  Logs: {log_file}")
+                return 0
+
+        print("⚠ Gallery started but port is not responding yet")
+        print(f"  Logs: {log_file}")
+        return 1
+    except Exception as e:
+        print(f"✗ Error starting gallery: {e}")
+        return 1
+
+
+def gallery_stop(port: int = 5051) -> int:
+    """Stop the ComfyUI output gallery web app."""
+    util_dir = SCRIPT_DIR / "utility"
+    pid_file = util_dir / ".gallery.pid"
+    pid = _read_pid_file(pid_file)
+
+    if not pid or not _pid_is_running(pid):
+        if check_port_open(host="localhost", port=port):
+            pids = _find_listening_pids(port)
+            if not pids:
+                print("⚠ Gallery port is open but PID file/process not found")
+                print("  You may need to stop it manually")
+                return 1
+
+            print(f"Stopping gallery (found listener PID(s): {', '.join(str(x) for x in pids)})...")
+            for p in pids:
+                try:
+                    os.kill(p, signal.SIGTERM)
+                except Exception:
+                    pass
+
+            for _ in range(20):
+                time.sleep(0.25)
+                if not check_port_open(host="localhost", port=port):
+                    try:
+                        pid_file.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                    print("✓ Gallery stopped successfully")
+                    return 0
+
+            print("⚠ Force killing gallery...")
+            for p in pids:
+                try:
+                    os.kill(p, signal.SIGKILL)
+                except Exception:
+                    pass
+            time.sleep(0.5)
+            try:
+                pid_file.unlink(missing_ok=True)
+            except Exception:
+                pass
+            if not check_port_open(host="localhost", port=port):
+                print("✓ Gallery stopped")
+                return 0
+            print("✗ Failed to stop gallery")
+            return 1
+
+        print("✓ Gallery is not running")
+        return 0
+
+    print(f"Stopping gallery (PID: {pid})...")
+    try:
+        os.kill(pid, signal.SIGTERM)
+        for _ in range(10):
+            time.sleep(0.5)
+            if not _pid_is_running(pid):
+                try:
+                    pid_file.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                print("✓ Gallery stopped successfully")
+                return 0
+
+        print("⚠ Force killing gallery...")
+        os.kill(pid, signal.SIGKILL)
+        time.sleep(0.5)
+        try:
+            pid_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+        if not check_port_open(host="localhost", port=port):
+            print("✓ Gallery stopped")
+            return 0
+        print("✗ Failed to stop gallery")
+        return 1
+    except ProcessLookupError:
+        try:
+            pid_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+        print("✓ Gallery process not found (already stopped)")
+        return 0
+    except Exception as e:
+        print(f"✗ Error stopping gallery: {e}")
+        return 1
+
+
 def _http_get_json(url: str, headers: dict | None = None, timeout: int = 5):
     req = urllib.request.Request(url, headers=headers or {}, method="GET")
     with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -1094,8 +1213,15 @@ Examples:
     viewer_subparsers = viewer_parser.add_subparsers(dest='action', help='Action')
     viewer_subparsers.add_parser('start', help='Start viewer web app (http://localhost:5000)')
     viewer_subparsers.add_parser('stop', help='Stop viewer web app')
-    viewer_subparsers.add_parser('restart', help='Restart viewer web app')
+    viewer_subparsers.add_parser('restart', help='Restart the viewer web app')
     viewer_subparsers.add_parser('status', help='Check viewer status')
+    
+    # Gallery commands
+    gallery_parser = subparsers.add_parser('gallery', help='Manage the ComfyUI output gallery web app')
+    gallery_subparsers = gallery_parser.add_subparsers(dest='action', help='Action')
+    gallery_subparsers.add_parser('start', help='Start gallery web app (http://localhost:5051)')
+    gallery_subparsers.add_parser('stop', help='Stop gallery web app')
+    gallery_subparsers.add_parser('status', help='Check gallery status')
     
     # Project commands
     project_parser = subparsers.add_parser('project', help='Manage projects')
@@ -1109,17 +1235,11 @@ Examples:
     doctor_parser.add_argument('--project', help='Optional project name to validate configs and input')
 
     # Run command (iterative_imagination.py)
-    run_parser = subparsers.add_parser('run', help='Run iterative_imagination.py for a project (start/reset/resume)')
-    run_parser.add_argument('--project', type=str, required=True, help='Project name (uses projects/<name>/config/rules.yaml)')
-    run_parser.add_argument('--rules', type=str, help='Path to rules.yaml (alternative to --project)')
-    run_parser.add_argument('--input', type=str, help='Path to input image (alternative to project input/input.png)')
-    run_parser.add_argument('--reset', action='store_true', help='Reset run state (clears checkpoint and archives old run artefacts)')
-    run_parser.add_argument('--resume-from', dest='resume_from', type=int, help='Resume from a specific iteration number')
-    run_parser.add_argument('--seed-from-ranking', dest='seed_from_ranking', type=str, help='Seed from a prior run human ranking (RUN_ID or \"latest\")')
-    run_parser.add_argument('--seed-ranking-mode', dest='seed_ranking_mode', type=str, default='rank1', help='Seeding mode: rank1|top3|top5 (default: rank1)')
-    run_parser.add_argument('--seed-from-human', dest='seed_from_human', type=str, help='(deprecated) alias for --seed-from-ranking')
-    run_parser.add_argument('--dry-run', dest='dry_run', action='store_true', help='Validate configs but do not run')
-    run_parser.add_argument('--verbose', action='store_true', help='Enable debug logging')
+    run_parser = subparsers.add_parser(
+        "run",
+        help="Run iterative_imagination.py for a project (start/reset/resume)",
+    )
+    build_run_parser(run_parser, require_project=True)
 
     # Variants command (iterative_imagination.py multiple times with different workflows)
     variants_parser = subparsers.add_parser('variants', help='Run workflow variants back-to-back for a project (A/B testing)')
@@ -1202,11 +1322,22 @@ Examples:
             viewer_parser.print_help()
             return 1
 
+    elif args.command == 'gallery':
+        if args.action == 'start':
+            return gallery_start()
+        elif args.action == 'stop':
+            return gallery_stop()
+        elif args.action == 'status':
+            return gallery_status()
+        else:
+            gallery_parser.print_help()
+            return 1
+
     elif args.command == 'doctor':
         return doctor(project=getattr(args, "project", None))
 
     elif args.command == 'run':
-        return run_imagination(args)
+        return run_iteration(args, IterativeImagination, run_parser)
     
     elif args.command == 'variants':
         return run_variants(args)

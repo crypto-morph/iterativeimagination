@@ -1,9 +1,4 @@
-#!/usr/bin/env python3
-"""
-Project Manager
-
-Handles project structure, configuration loading, and ComfyUI input directory setup.
-"""
+"""Legacy ProjectManager wrapper around new core utilities."""
 
 import os
 import shutil
@@ -11,24 +6,31 @@ import time
 from pathlib import Path
 import json
 from typing import Dict, Optional
-import yaml
+
+from core.config.project_paths import ProjectPaths
+from core.config.config_store import ConfigStore
+from core.services.project_state import ProjectState
 
 
 class ProjectManager:
-    """Manages project structure and configuration."""
+    """Manages project structure, configuration, and ComfyUI prep (legacy facade)."""
     
     def __init__(self, project_name: str):
         self.project_name = project_name
-        self.project_root = Path("projects") / project_name
+        self.paths = ProjectPaths(project_name)
+        self.config = ConfigStore(self.paths)
+        self.paths.ensure_project_directories()
+        self.state = ProjectState(self.paths)
+    
+    # ------------------------------------------------------------------
+    # Convenience properties
+    # ------------------------------------------------------------------
+    @property
+    def project_root(self) -> Path:
+        return self.paths.project_root
     
     def load_rules(self) -> Dict:
-        """Load rules.yaml from project config."""
-        rules_path = self.project_root / "config" / "rules.yaml"
-        if not rules_path.exists():
-            raise FileNotFoundError(f"Rules file not found: {rules_path}")
-        
-        with open(rules_path, 'r', encoding='utf-8') as f:
-            return yaml.safe_load(f)
+        return self.config.load_rules()
     
     def get_input_image_path(self) -> Path:
         """Get path to the current input image.
@@ -55,9 +57,7 @@ class ProjectManager:
     
     def ensure_directories(self):
         """Ensure all required project directories exist."""
-        (self.project_root / "working").mkdir(parents=True, exist_ok=True)
-        (self.project_root / "logs").mkdir(parents=True, exist_ok=True)
-        (self.project_root / "output").mkdir(parents=True, exist_ok=True)
+        self.paths.ensure_project_directories()
 
     def create_run_id(self) -> str:
         """Create a filesystem-safe run id for grouping iteration artefacts."""
@@ -66,132 +66,39 @@ class ProjectManager:
 
     def get_run_root(self, run_id: str) -> Path:
         """Get the root directory for a run under working/."""
-        return self.project_root / "working" / run_id
+        return self.paths.run_root(run_id)
 
     def ensure_run_directories(self, run_id: str):
         """Ensure run subdirectories exist under working/{run_id}/."""
-        run_root = self.get_run_root(run_id)
-        (run_root / "images").mkdir(parents=True, exist_ok=True)
-        (run_root / "questions").mkdir(parents=True, exist_ok=True)
-        (run_root / "evaluation").mkdir(parents=True, exist_ok=True)
-        (run_root / "comparison").mkdir(parents=True, exist_ok=True)
-        (run_root / "metadata").mkdir(parents=True, exist_ok=True)
-        (run_root / "human").mkdir(parents=True, exist_ok=True)
+        self.paths.ensure_run_directories(run_id)
 
     def list_run_ids(self) -> list[str]:
         """List run IDs under working/, newest first."""
-        working_dir = self.project_root / "working"
-        if not working_dir.exists():
-            return []
-        runs = []
-        for p in working_dir.iterdir():
-            if not p.is_dir():
-                continue
-            # run ids are timestamp-like and start with a digit (e.g. 2026-01-09_22-25-59)
-            if not p.name or not p.name[0].isdigit():
-                continue
-            runs.append(p.name)
-        runs.sort(reverse=True)
-        return runs
+        return self.state.list_run_ids()
 
     def latest_run_id(self) -> Optional[str]:
-        runs = self.list_run_ids()
-        return runs[0] if runs else None
+        return self.state.latest_run_id()
 
     def latest_run_id_with_human_feedback(self) -> Optional[str]:
         """Return the most recent run id that has human feedback (human/ranking.json)."""
-        for run_id in self.list_run_ids():
-            p = self.get_run_root(run_id) / "human" / "ranking.json"
-            if p.exists():
-                return run_id
-        return None
+        return self.state.latest_run_id_with_human_feedback()
 
     def load_human_ranking(self, run_id: str) -> Optional[Dict]:
         """Load working/<run_id>/human/ranking.json if present."""
-        p = self.get_run_root(run_id) / "human" / "ranking.json"
-        if not p.exists():
-            return None
-        try:
-            with open(p, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return None
+        return self.state.load_human_ranking(run_id)
 
     def load_iteration_metadata(self, run_id: str, iteration_num: int) -> Optional[Dict]:
         """Load metadata for an iteration in a run."""
-        paths = self.get_iteration_paths(iteration_num, run_id=run_id)
-        p = paths.get("metadata")
-        if not p or not p.exists():
-            return None
-        try:
-            with open(p, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return None
+        return self.state.load_iteration_metadata(run_id=run_id, iteration_num=iteration_num)
     
     def load_aigen_config(self) -> Dict:
-        """Load AIGen.yaml, preferring working directory, then config, then defaults.
-        Merges aivis config from project config into working file if both exist."""
-        working_aigen = self.project_root / "working" / "AIGen.yaml"
-        project_aigen = self.project_root / "config" / "AIGen.yaml"
-        defaults_aigen = Path("defaults") / "config" / "AIGen.yaml"
-        
-        # Load working config if it exists
-        if working_aigen.exists():
-            with open(working_aigen, 'r', encoding='utf-8') as f:
-                config = yaml.safe_load(f) or {}
-        else:
-            config = {}
-        
-        # Merge aivis config from project config if it exists (project config takes precedence)
-        if project_aigen.exists():
-            with open(project_aigen, 'r', encoding='utf-8') as f:
-                project_config = yaml.safe_load(f) or {}
-            if 'aivis' in project_config:
-                config['aivis'] = project_config['aivis']
-        
-        # If no working file and no project config, use defaults
-        if not working_aigen.exists() and not project_aigen.exists():
-            if defaults_aigen.exists():
-                with open(defaults_aigen, 'r', encoding='utf-8') as f:
-                    config = yaml.safe_load(f) or {}
-            else:
-                raise FileNotFoundError("No AIGen.yaml found in project, config, or defaults")
-        
-        # Save merged config to working directory
-        with open(working_aigen, 'w', encoding='utf-8') as f:
-            yaml.dump(config, f, default_flow_style=False)
-        
-        return config
+        return self.config.load_aigen_config()
     
     def save_aigen_config(self, config: Dict):
-        """Save AIGen.yaml to working directory."""
-        working_aigen = self.project_root / "working" / "AIGen.yaml"
-        with open(working_aigen, 'w', encoding='utf-8') as f:
-            yaml.dump(config, f, default_flow_style=False)
+        self.config.save_aigen_config(config)
     
     def load_aivis_config(self) -> Dict:
-        """Load AIVis.yaml, preferring project config, then defaults."""
-        project_aivis = self.project_root / "config" / "AIVis.yaml"
-        defaults_aivis = Path("defaults") / "config" / "AIVis.yaml"
-        
-        # Try project config first
-        if project_aivis.exists():
-            with open(project_aivis, 'r', encoding='utf-8') as f:
-                return yaml.safe_load(f) or {}
-        
-        # Fall back to defaults
-        if defaults_aivis.exists():
-            with open(defaults_aivis, 'r', encoding='utf-8') as f:
-                return yaml.safe_load(f) or {}
-        
-        # If neither exists, return minimal defaults
-        return {
-            "provider": "ollama",
-            "model": "qwen3-vl:4b",
-            "fallback_provider": "ollama",
-            "fallback_model": "llava-phi3:latest"
-        }
+        return self.config.load_aivis_config()
     
     def find_comfyui_input_dir(self) -> Path:
         """Find ComfyUI input directory."""
@@ -258,55 +165,20 @@ class ProjectManager:
           working/{run_id}/{images|questions|evaluation|comparison|metadata}/
         Otherwise uses legacy flat layout in working/.
         """
-        if run_id:
-            self.ensure_run_directories(run_id)
-            run_root = self.get_run_root(run_id)
-            return {
-                "image": run_root / "images" / f"iteration_{iteration_num}.png",
-                "questions": run_root / "questions" / f"iteration_{iteration_num}_questions.json",
-                "evaluation": run_root / "evaluation" / f"iteration_{iteration_num}_evaluation.json",
-                "comparison": run_root / "comparison" / f"iteration_{iteration_num}_comparison.json",
-                "metadata": run_root / "metadata" / f"iteration_{iteration_num}_metadata.json",
-            }
-
-        working_dir = self.project_root / "working"
-        return {
-            "image": working_dir / f"iteration_{iteration_num}.png",
-            "questions": working_dir / f"iteration_{iteration_num}_questions.json",
-            "evaluation": working_dir / f"iteration_{iteration_num}_evaluation.json",
-            "comparison": working_dir / f"iteration_{iteration_num}_comparison.json",
-            "metadata": working_dir / f"iteration_{iteration_num}_metadata.json",
-        }
+        return self.paths.iteration_paths(iteration_num, run_id=run_id)
     
     def get_output_paths(self) -> Dict[str, Path]:
         """Get paths for output files."""
-        output_dir = self.project_root / "output"
-        return {
-            "image": output_dir / "output.png",
-            "metadata": output_dir / "output_metadata.json",
-        }
+        return self.paths.output_paths()
     
     def get_checkpoint_path(self) -> Path:
         """Get path to checkpoint file for resume functionality."""
-        return self.project_root / "working" / "checkpoint.json"
+        return self.state.checkpoint_path
     
     def save_checkpoint(self, iteration: int, best_iteration: Optional[int], best_score: float, run_id: Optional[str] = None):
         """Save checkpoint for resume functionality."""
-        checkpoint = {
-            "last_iteration": iteration,
-            "best_iteration": best_iteration,
-            "best_score": best_score,
-            "timestamp": time.time(),
-            "run_id": run_id
-        }
-        checkpoint_path = self.get_checkpoint_path()
-        with open(checkpoint_path, 'w', encoding='utf-8') as f:
-            json.dump(checkpoint, f, indent=2)
+        self.state.save_checkpoint(iteration, best_iteration, best_score, run_id)
     
     def load_checkpoint(self) -> Optional[Dict]:
         """Load checkpoint if it exists."""
-        checkpoint_path = self.get_checkpoint_path()
-        if checkpoint_path.exists():
-            with open(checkpoint_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        return None
+        return self.state.load_checkpoint()
