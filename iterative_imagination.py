@@ -28,6 +28,15 @@ from cli.runner import build_run_parser, run_iteration
 from core.services.evaluation_service import EvaluationService
 from core.services.prompt_service import PromptUpdateService
 from core.services.parameter_service import ParameterUpdateService
+from core.services.iteration_orchestrator import IterationOrchestrator
+from core.services.multi_mask_sequencer import MultiMaskSequencer
+from core.services.criteria_filter import filter_criteria_for_mask
+from core.constants import (
+    INPAINTING_DENOISE_MIN,
+    INPAINTING_CFG_MIN,
+    INPAINTING_DENOISE_THRESHOLD,
+    INPAINTING_CFG_THRESHOLD,
+)
 
 
 class IterativeImagination:
@@ -112,6 +121,28 @@ class IterativeImagination:
             describe_original_image_fn=self._describe_original_image,
         )
         self.parameter_service = ParameterUpdateService(logger=self.logger, rules=self.rules)
+        
+        # Initialize iteration orchestrator
+        # WorkflowManager uses static methods, so we pass the class
+        self.orchestrator = IterationOrchestrator(
+            logger=self.logger,
+            project=self.project,
+            comfyui_client=self.comfyui,
+            aivis_client=self.aivis,
+            evaluator=self.evaluator,
+            workflow_manager=WorkflowManager,  # Static methods, so class is fine
+            input_image_path=self.input_image_path,
+            comfyui_input_dir=self.comfyui_input_dir,
+            rules=self.rules,
+            run_id=None,  # Will be set in run()
+        )
+        
+        # Initialize multi-mask sequencer
+        self.mask_sequencer = MultiMaskSequencer(
+            logger=self.logger,
+            project=self.project,
+            rules=self.rules,
+        )
         
         # Track best iteration
         self.best_score = 0
@@ -284,30 +315,6 @@ class IterativeImagination:
             self.original_description = self.aivis.describe_image(str(self.input_image_path))
         return self.original_description
 
-    def _mask_is_all_white(self, mask_path: Path) -> bool:
-        """Check if a mask image is all white (or nearly all white), indicating everything is editable.
-        
-        Returns True if >95% of pixels are white (>= 240 in grayscale).
-        """
-        try:
-            from PIL import Image
-            import numpy as np
-            
-            img = Image.open(mask_path).convert("L")
-            arr = np.array(img)
-            
-            # Count pixels that are white (>= 240 to account for slight variations)
-            white_pixels = np.sum(arr >= 240)
-            total_pixels = arr.size
-            
-            if total_pixels == 0:
-                return False
-            
-            white_ratio = white_pixels / total_pixels
-            return white_ratio >= 0.95
-        except Exception as e:
-            self.logger.warning(f"Could not check if mask is all-white: {e}")
-            return False
 
     def _get_inpainting_boost_values(self) -> dict:
         """Get inpainting boost values from rules.yaml project section.
@@ -318,10 +325,10 @@ class IterativeImagination:
         project = rules.get("project") or {}
         
         return {
-            "denoise_min": float(project.get("inpainting_denoise_min", 0.85)),
-            "cfg_min": float(project.get("inpainting_cfg_min", 10.0)),
-            "denoise_threshold": float(project.get("inpainting_denoise_threshold", 0.7)),
-            "cfg_threshold": float(project.get("inpainting_cfg_threshold", 9.0)),
+            "denoise_min": float(project.get("inpainting_denoise_min", INPAINTING_DENOISE_MIN)),
+            "cfg_min": float(project.get("inpainting_cfg_min", INPAINTING_CFG_MIN)),
+            "denoise_threshold": float(project.get("inpainting_denoise_threshold", INPAINTING_DENOISE_THRESHOLD)),
+            "cfg_threshold": float(project.get("inpainting_cfg_threshold", INPAINTING_CFG_THRESHOLD)),
         }
 
     def _get_rules_base_prompts(self, scope: Optional[str]) -> tuple[str, str]:
@@ -377,26 +384,19 @@ class IterativeImagination:
     
     def _run_iteration(self, iteration_num: int) -> Optional[Dict]:
         """Run a single iteration of generation and evaluation."""
-        self.logger.info(f"{'='*60}\nIteration {iteration_num}\n{'='*60}")
-        
         # Load current AIGen.yaml
         aigen_config = self.project.load_aigen_config()
         project_cfg = (self.rules.get("project") or {}) if isinstance(self.rules, dict) else {}
         
-        # Auto-boost denoise/cfg when masking is enabled (inpainting allows higher edit strength)
-        # This will be applied after mask detection, but we check here to avoid duplicate boosts
-        mask_cfg = aigen_config.get("masking") or {}
-        mask_enabled_precheck = bool(mask_cfg.get("enabled", True))
+        # Handle seed locking
         lock_seed = bool(project_cfg.get("lock_seed"))
         if lock_seed:
             params = aigen_config.get("parameters") or {}
             seed = params.get("seed")
             if seed is None:
-                # If we already discovered a good seed earlier in the run, re-use it.
                 if self.locked_seed is not None:
                     params["seed"] = int(self.locked_seed)
                     aigen_config["parameters"] = params
-                    # Persist so ComfyUI workflow gets a deterministic seed.
                     self.project.save_aigen_config(aigen_config)
             else:
                 try:
@@ -404,534 +404,27 @@ class IterativeImagination:
                 except Exception:
                     pass
         
-        # Prepare input image for ComfyUI
-        input_filename = self.project.prepare_input_image(
-            self.input_image_path, self.comfyui_input_dir
-        )
-
-        # Optional mask support (single or multi-mask).
-        #
-        # Backwards compatible:
-        # - If projects/<name>/input/mask.png exists, we use it (unless masking.enabled is false).
-        #
-        # Multi-mask:
-        # - AIGen.yaml can define masking.active_mask + masking.masks to select a specific mask file.
-        # - Criteria can be scoped per mask via acceptance_criteria.applies_to_masks in rules.yaml.
-        mask_filename = None
-        active_mask_name: Optional[str] = None
-
-        mask_cfg = aigen_config.get("masking") or {}
-        try:
-            mask_enabled = bool(mask_cfg.get("enabled", True))
-        except Exception:
-            mask_enabled = True
-
-        if mask_enabled:
-            # Resolve active mask name (optional)
-            raw_active = mask_cfg.get("active_mask") or mask_cfg.get("active")
-            if isinstance(raw_active, str) and raw_active.strip():
-                active_mask_name = raw_active.strip()
-
-            # Resolve masks list (optional)
-            resolved_mask_path: Optional[Path] = None
-            masks = mask_cfg.get("masks")
-            if masks:
-                # List form: [{name, file}, ...]
-                if isinstance(masks, list):
-                    for m in masks:
-                        if not isinstance(m, dict):
-                            continue
-                        name = str(m.get("name") or "").strip()
-                        file_ = str(m.get("file") or "").strip()
-                        if not name or not file_:
-                            continue
-                        if active_mask_name and name != active_mask_name:
-                            continue
-                        candidate = Path(file_)
-                        if not candidate.is_absolute():
-                            candidate = (self.project.project_root / candidate).resolve()
-                        if candidate.exists():
-                            resolved_mask_path = candidate
-                            active_mask_name = name
-                            break
-                # Dict form: {name: file, ...}
-                elif isinstance(masks, dict):
-                    if active_mask_name and active_mask_name in masks:
-                        candidate = Path(str(masks.get(active_mask_name)))
-                        if not candidate.is_absolute():
-                            candidate = (self.project.project_root / candidate).resolve()
-                        if candidate.exists():
-                            resolved_mask_path = candidate
-                    else:
-                        # Pick first existing mask in dict (stable order in YAML)
-                        for name, file_ in masks.items():
-                            n = str(name).strip()
-                            f = str(file_).strip()
-                            if not n or not f:
-                                continue
-                            candidate = Path(f)
-                            if not candidate.is_absolute():
-                                candidate = (self.project.project_root / candidate).resolve()
-                            if candidate.exists():
-                                resolved_mask_path = candidate
-                                active_mask_name = n
-                                break
-
-            # Fallback: try input/masks/{active_mask_name}.png if active_mask_name is set
-            if resolved_mask_path is None and active_mask_name:
-                try:
-                    named_mask = self.project.project_root / "input" / "masks" / f"{active_mask_name}.png"
-                    if named_mask.exists():
-                        resolved_mask_path = named_mask
-                        self.logger.info(f"Found mask file: input/masks/{active_mask_name}.png")
-                except Exception:
-                    pass
-            
-            # Fallback to legacy mask.png if nothing selected
-            if resolved_mask_path is None:
-                try:
-                    legacy = self.project.project_root / "input" / "mask.png"
-                    if legacy.exists():
-                        resolved_mask_path = legacy
-                        if not active_mask_name:
-                            active_mask_name = "default"
-                except Exception:
-                    resolved_mask_path = None
-
-            if resolved_mask_path is not None:
-                # Log which mask file is being used
-                self.logger.info(f"Using mask: {active_mask_name or 'default'} from file: {resolved_mask_path}")
-                
-                # If the mask is all white (everything editable), prefer running without inpaint.
-                if self._mask_is_all_white(resolved_mask_path):
-                    self.logger.warning("Mask appears all-white (>95% white pixels); treating as no-mask (non-inpaint) run.")
-                    resolved_mask_path = None
-                if resolved_mask_path is not None:
-                    try:
-                        mask_filename = self.project.prepare_input_image(resolved_mask_path, self.comfyui_input_dir)
-                        # Log mask info for debugging
-                        try:
-                            from PIL import Image
-                            import numpy as np
-                            img = Image.open(resolved_mask_path).convert("L")
-                            arr = np.array(img)
-                            white = np.sum(arr >= 128)  # Pixels that are white (editable)
-                            total = arr.size
-                            coverage = white / total * 100
-                            self.logger.info(f"Mask '{active_mask_name or 'default'}' coverage: {coverage:.1f}% white (editable), {100-coverage:.1f}% black (preserved)")
-                            if coverage > 50:
-                                self.logger.warning(f"Mask '{active_mask_name or 'default'}' covers {coverage:.1f}% of image - this may affect multiple subjects, not just the target!")
-                        except ImportError as e:
-                            self.logger.warning(f"Could not analyze mask coverage (PIL/numpy not available): {e}")
-                        except Exception as e:
-                            self.logger.warning(f"Could not analyze mask coverage: {e}", exc_info=True)
-                        # Boost denoise/cfg for inpainting (masks allow higher edit strength)
-                        params = aigen_config.get("parameters", {})
-                        current_denoise = float(params.get("denoise", 0.5))
-                        current_cfg = float(params.get("cfg", 7.0))
-                        
-                        # Get configurable boost values from rules.yaml
-                        boost = self._get_inpainting_boost_values()
-                        
-                        # If denoise/cfg are at default or low values, boost them for inpainting
-                        if current_denoise < boost["denoise_threshold"]:
-                            params["denoise"] = boost["denoise_min"]
-                            self.logger.info(f"Boosted denoise to {params['denoise']} for inpainting (mask: {active_mask_name or 'default'}, from rules.yaml)")
-                        if current_cfg < boost["cfg_threshold"]:
-                            params["cfg"] = boost["cfg_min"]
-                            self.logger.info(f"Boosted cfg to {params['cfg']} for inpainting (mask: {active_mask_name or 'default'}, from rules.yaml)")
-                        
-                        aigen_config["parameters"] = params
-                        # Save the boosted values back to working/AIGen.yaml
-                        try:
-                            self.project.save_aigen_config(aigen_config)
-                        except Exception:
-                            pass
-                    except Exception:
-                        mask_filename = None
-
-        # Optional ControlNet control image (for workflows that require a separate control image input).
-        # Convention: projects/<name>/input/control.png
-        control_filename = None
-        try:
-            control_path = self.project.project_root / "input" / "control.png"
-            if control_path.exists():
-                control_filename = self.project.prepare_input_image(control_path, self.comfyui_input_dir)
-        except Exception:
-            control_filename = None
-
-        # When inpainting (mask present), allow seed to vary by default so the masked region can explore options.
-        # You can force locking via project.lock_seed_inpaint: true
-        inpaint_mode = bool(mask_filename)
-        if inpaint_mode and not bool(project_cfg.get("lock_seed_inpaint", False)):
-            lock_seed = False
-            # Also clear any existing seed to ensure variation between iterations
-            params = aigen_config.get("parameters", {})
-            if "seed" in params and params.get("seed") is not None:
-                params["seed"] = None
-                aigen_config["parameters"] = params
-                try:
-                    self.project.save_aigen_config(aigen_config)
-                    self.logger.info("Cleared seed for inpainting mode to allow variation")
-                except Exception:
-                    pass
-
-        # If AIGen.yaml prompts are empty, initialise from rules.yaml base prompts (global or per-mask).
-        prompts_cfg = aigen_config.get("prompts") or {}
-        if not isinstance(prompts_cfg, dict):
-            prompts_cfg = {}
-        cur_pos = str(prompts_cfg.get("positive") or "").strip()
-        cur_neg = str(prompts_cfg.get("negative") or "").strip()
-        if not cur_pos or not cur_neg:
-            scope_for_prompts = active_mask_name if active_mask_name else None
-            base_pos, base_neg = self._get_rules_base_prompts(scope_for_prompts)
-            
-            # Validate: reject prompts that look like field names (snake_case identifiers matching criterion fields).
-            def _looks_like_field_names(text: str) -> bool:
-                """Detect if prompt text is just field names instead of actual SD tags."""
-                if not text:
-                    return False
-                # Get all criterion field names
-                all_fields = {str(c.get("field", "")).strip() for c in (self.rules.get("acceptance_criteria") or []) if isinstance(c, dict)}
-                # Check if the prompt is mostly/entirely field names
-                words = [w.strip().lower() for w in text.replace(",", " ").split() if w.strip()]
-                if not words:
-                    return False
-                # If >50% of words match field names, it's probably field names
-                matches = sum(1 for w in words if w in all_fields or w.replace("not_", "") in all_fields)
-                return matches > len(words) * 0.5
-            
-            changed = False
-            if not cur_pos and (base_pos or "").strip():
-                if _looks_like_field_names(base_pos):
-                    self.logger.warning(
-                        f"Rejected rules.yaml base prompt (positive) - it contains field names, not SD tags. "
-                        f"Use 'Generate base prompts' in Rules UI to create proper prompts. "
-                        f"Found: {base_pos[:80]}"
-                    )
-                else:
-                    prompts_cfg["positive"] = base_pos
-                    changed = True
-            if not cur_neg and (base_neg or "").strip():
-                if _looks_like_field_names(base_neg):
-                    self.logger.warning(
-                        f"Rejected rules.yaml base prompt (negative) - it contains field names, not SD tags. "
-                        f"Use 'Generate base prompts' in Rules UI to create proper prompts. "
-                        f"Found: {base_neg[:80]}"
-                    )
-                else:
-                    prompts_cfg["negative"] = base_neg
-                    changed = True
-            if changed:
-                aigen_config["prompts"] = prompts_cfg
-                try:
-                    self.project.save_aigen_config(aigen_config)
-                except Exception:
-                    pass
-                self.logger.info(
-                    f"Initialised prompts from rules.yaml prompts (scope={scope_for_prompts or 'default/global'})."
-                )
+        # Update orchestrator run_id
+        self.orchestrator.run_id = self.run_id
         
-        # Load and update workflow
-        # If a mask is present, prefer an inpaint workflow (project-local first, then defaults).
-        workflow_path = aigen_config.get("workflow_file")
-        workflow_switched = False
-        if mask_filename:
-            # If current workflow isn't already an inpaint workflow, try switching to one.
-            wf_name = str(workflow_path or "")
-            if "inpaint" not in wf_name.lower():
-                candidate = self.project.project_root / "workflow" / "img2img_inpaint_api.json"
-                if candidate.exists():
-                    workflow_path = "workflow/img2img_inpaint_api.json"
-                    workflow_switched = True
-                else:
-                    # Fall back to repo defaults path if project doesn't have it for some reason.
-                    workflow_path = "defaults/workflow/img2img_inpaint_api.json"
-                    workflow_switched = True
-                # Persist the workflow switch to AIGen.yaml
-                if workflow_switched:
-                    aigen_config["workflow_file"] = workflow_path
-                    try:
-                        self.project.save_aigen_config(aigen_config)
-                        self.logger.info(f"Switched to inpaint workflow: {workflow_path}")
-                    except Exception:
-                        pass
-
-        workflow = WorkflowManager.load_workflow(
-            workflow_path, self.project.project_root
-        )
-        updated_workflow = WorkflowManager.update_workflow(
-            workflow,
-            aigen_config,
-            input_filename,
-            mask_image_path=mask_filename,
-            control_image_path=control_filename,
+        # Get inpainting boost config
+        boost_config = self._get_inpainting_boost_values()
+        
+        # Execute iteration via orchestrator
+        metadata = self.orchestrator.execute_iteration(
+            iteration_num=iteration_num,
+            aigen_config=aigen_config,
+            project_cfg=project_cfg,
+            inpainting_boost_config=boost_config,
+            locked_seed=self.locked_seed,
+            get_rules_base_prompts_fn=self._get_rules_base_prompts,
         )
         
-        # Log checkpoint info (extract before removing metadata)
-        wf_meta = updated_workflow.get("_workflow_metadata", {})
-        ckpt_used = wf_meta.get("checkpoint_used", "unknown")
-        ckpt_switched = wf_meta.get("checkpoint_switched", False)
-        if ckpt_switched:
-            self.logger.info(f"Using inpainting checkpoint: {ckpt_used}")
-        else:
-            self.logger.info(f"Using checkpoint: {ckpt_used}")
-        
-        # Remove metadata before sending to ComfyUI (it doesn't understand our custom fields)
-        workflow_for_comfyui = {k: v for k, v in updated_workflow.items() if k != "_workflow_metadata"}
-        
-        # Queue workflow
-        try:
-            prompt_id = self.comfyui.queue_prompt(workflow_for_comfyui)
-            self.logger.info(f"Prompt ID: {prompt_id}")
-        except Exception as e:
-            self.logger.error(f"Failed to queue workflow: {e}")
-            return None
-        
-        # Wait for completion
-        self.logger.info("Waiting for workflow completion...")
-        if not self.comfyui.wait_for_completion(prompt_id):
-            self.logger.warning("Workflow completion timeout, attempting to fetch result anyway...")
-        
-        # Get result
-        self.logger.info("Fetching result...")
-        image_info = None
-        last_error = None
-        for attempt in range(8):
-            try:
-                time.sleep(1 if attempt > 0 else 0.5)
-                history = self.comfyui.get_history(prompt_id)
-                
-                # ComfyUI history API returns {prompt_id: {...}}}
-                # But sometimes it's just the prompt_id directly
-                if isinstance(history, dict):
-                    if prompt_id in history:
-                        execution = history[prompt_id]
-                    elif len(history) == 1:
-                        # Sometimes it's wrapped differently
-                        execution = list(history.values())[0]
-                    else:
-                        # Try to find any entry that looks like our execution
-                        execution = history
-                else:
-                    execution = history
-                
-                if not isinstance(execution, dict):
-                    last_error = f"Unexpected history format: {type(execution)}"
-                    continue
-                
-                # Check for status/error first
-                status = execution.get('status', {})
-                if isinstance(status, dict):
-                    if status.get('completed', False) is False:
-                        if status.get('error'):
-                            last_error = f"Workflow error: {status.get('error')}"
-                            self.logger.error(last_error)
-                            return None
-                        # Still running, continue waiting
-                        continue
-                
-                outputs = execution.get('outputs', {})
-                
-                if not outputs:
-                    # Check if it's in a different format
-                    if 'images' in execution:
-                        # Direct images array
-                        if len(execution['images']) > 0:
-                            image_info = execution['images'][0]
-                            break
-                    last_error = f"No outputs found in execution. Keys: {list(execution.keys())}"
-                    continue
-                
-                # Look for SaveImage node outputs
-                for node_id, node_output in outputs.items():
-                    if not isinstance(node_output, dict):
-                        continue
-                    if 'images' in node_output and len(node_output['images']) > 0:
-                        image_info = node_output['images'][0]
-                        self.logger.info(f"Found image in node {node_id}: {image_info.get('filename', 'unknown')}")
-                        break
-                
-                if image_info:
-                    break
-                    
-            except Exception as e:
-                last_error = f"Exception fetching history: {e}"
-                self.logger.debug(f"Attempt {attempt + 1} failed: {last_error}")
-                if attempt < 7:
-                    continue
-        
-        if not image_info:
-            error_msg = f"No image found in workflow outputs"
-            if last_error:
-                error_msg += f" (last error: {last_error})"
-            self.logger.error(error_msg)
-            # Try to get more debug info
-            try:
-                history = self.comfyui.get_history(prompt_id)
-                self.logger.debug(f"History response: {json.dumps(history, indent=2)[:500]}")
-            except Exception as e:
-                self.logger.debug(f"Could not fetch history for debugging: {e}")
-            return None
-        
-        # Download and save image
-        self.logger.info("Downloading generated image...")
-        image_data = self.comfyui.download_image(
-            image_info['filename'],
-            image_info.get('subfolder', ''),
-            image_info.get('type', 'output')
-        )
-        
-        paths = self.project.get_iteration_paths(iteration_num, run_id=self.run_id)
-        with open(paths['image'], 'wb') as f:
-            f.write(image_data)
-        self.logger.info(f"Saved image: {paths['image']}")
-        
-        # Answer questions, evaluate, and compare
-        questions = self._answer_questions(str(paths['image']))
-        
-        # If criteria are scoped per mask, evaluate only the relevant subset for this iteration.
-        #
-        # Preferred: rules.yaml membership model:
-        #   masking:
-        #     masks:
-        #       - name: left
-        #         active_criteria: [field1, field2]
-        #
-        # Backwards compatible: acceptance_criteria.applies_to_masks / mask_scope
-        all_criteria = self.rules.get('acceptance_criteria', []) or []
-
-        def _criteria_for_active_mask(criteria_defs: List[Dict], mask_name: Optional[str]) -> List[Dict]:
-            # Membership model
-            masking_rules = self.rules.get("masking") if isinstance(self.rules, dict) else None
-            masks = (masking_rules.get("masks") if isinstance(masking_rules, dict) else None) if masking_rules else None
-            if isinstance(masks, list) and masks:
-                if not mask_name:
-                    return criteria_defs
-                active_fields: set[str] = set()
-                for m in masks:
-                    if not isinstance(m, dict):
-                        continue
-                    if str(m.get("name") or "").strip() != str(mask_name).strip():
-                        continue
-                    ac = m.get("active_criteria") or []
-                    if isinstance(ac, list):
-                        active_fields = {str(x).strip() for x in ac if str(x).strip()}
-                    break
-                if not active_fields:
-                    return []
-                return [c for c in criteria_defs if isinstance(c, dict) and str(c.get("field") or "").strip() in active_fields]
-
-            # Legacy per-criterion scoping
-            if not mask_name:
-                return criteria_defs
-            out = []
-            for c in criteria_defs:
-                if not isinstance(c, dict):
-                    continue
-                scopes = c.get("applies_to_masks") or c.get("mask_scope")
-                if not scopes:
-                    out.append(c)
-                    continue
-                if isinstance(scopes, str):
-                    scopes_list = [scopes]
-                elif isinstance(scopes, list):
-                    scopes_list = scopes
-                else:
-                    scopes_list = [str(scopes)]
-                scopes_norm = [str(x).strip() for x in scopes_list if str(x).strip()]
-                if mask_name in scopes_norm:
-                    out.append(c)
-            return out
-
-        scoped_criteria = _criteria_for_active_mask(all_criteria, active_mask_name)
-        evaluation = self._evaluate_acceptance_criteria(str(paths['image']), questions, criteria=scoped_criteria)
-        
-        score = evaluation.get('overall_score', 0)
-        self.logger.info(f"Evaluation score: {score}%")
-        
-        comparison = self.aivis.compare_images(str(self.input_image_path), str(paths['image']))
-        
-        similarity = comparison.get('similarity_score', 0.5)
-        self.logger.info(f"Similarity score: {similarity:.2f}")
-        
-        # Collect AIVis metadata (provider, model, route info)
-        aivis_metadata = {
-            "evaluation": evaluation.get("_metadata", {}),
-            "comparison": comparison.get("_metadata", {}),
-            "questions": questions.get("_metadata", {})
-        }
-        
-        # Remove _metadata from results for cleaner output (but keep in saved files)
-        questions_clean = {k: v for k, v in questions.items() if k != "_metadata"}
-        evaluation_clean = {k: v for k, v in evaluation.items() if k != "_metadata"}
-        comparison_clean = {k: v for k, v in comparison.items() if k != "_metadata"}
-        
-        # Save files with metadata included
-        with open(paths['questions'], 'w', encoding='utf-8') as f:
-            json.dump(questions, f, indent=2)
-        with open(paths['evaluation'], 'w', encoding='utf-8') as f:
-            json.dump(evaluation, f, indent=2)
-        with open(paths['comparison'], 'w', encoding='utf-8') as f:
-            json.dump(comparison, f, indent=2)
-        
-        # Build and save metadata
-        parameters_used = aigen_config.get('parameters', {}).copy()
-        used_seed: Optional[int] = None
-        if 'seed' in parameters_used and parameters_used['seed'] is None:
-            for node_id, node_data in updated_workflow.items():
-                if isinstance(node_data, dict) and node_data.get('class_type') == 'KSampler':
-                    try:
-                        used_seed = int(node_data['inputs'].get('seed'))
-                    except Exception:
-                        used_seed = None
-                    parameters_used['seed'] = used_seed
-                    break
-        else:
-            try:
-                used_seed = int(parameters_used.get("seed"))
-            except Exception:
-                used_seed = None
-
-        # If seed locking is enabled and we haven't locked a seed yet, lock to the first used seed.
-        if lock_seed and self.locked_seed is None and used_seed is not None:
-            self.locked_seed = used_seed
-            try:
-                a2 = self.project.load_aigen_config()
-                p2 = a2.get("parameters") or {}
-                if p2.get("seed") is None:
-                    p2["seed"] = used_seed
-                    a2["parameters"] = p2
-                    self.project.save_aigen_config(a2)
-            except Exception:
-                pass
-        
-        # Capture prompts used for this iteration
-        prompts_used = aigen_config.get('prompts', {}).copy()
-        
-        # Get checkpoint info from workflow metadata (we already extracted it earlier)
-        # Use the ckpt_used we extracted before removing metadata
-        
-        metadata = {
-            "iteration": iteration_num,
-            "timestamp": time.time(),
-            "image_path": str(paths['image'].relative_to(self.project.project_root)),
-            "workflow_file_used": str(workflow_path),
-            "checkpoint_used": ckpt_used,
-            "mask_used": mask_filename,
-            "active_mask": active_mask_name,
-            "control_used": control_filename,
-            "parameters_used": parameters_used,
-            "prompts_used": prompts_used,
-            "questions": questions_clean,
-            "evaluation": evaluation_clean,
-            "comparison": comparison_clean,
-            "aivis_metadata": aivis_metadata,
-            "run_id": self.run_id
-        }
-        
-        with open(paths['metadata'], 'w', encoding='utf-8') as f:
-            json.dump(metadata, f, indent=2)
+        # Update locked_seed if it was extracted from workflow
+        if metadata and lock_seed:
+            used_seed = metadata.get("parameters_used", {}).get("seed")
+            if used_seed is not None and self.locked_seed is None:
+                self.locked_seed = used_seed
         
         return metadata
     
@@ -952,50 +445,7 @@ class IterativeImagination:
         # criteria active for that mask.
         all_criteria_defs = self.rules.get('acceptance_criteria', []) or []
         active_mask = iteration_result.get("active_mask")
-
-        def _criteria_for_active_mask(criteria_defs: List[Dict], mask_name: Optional[str]) -> List[Dict]:
-            masking_rules = self.rules.get("masking") if isinstance(self.rules, dict) else None
-            masks = (masking_rules.get("masks") if isinstance(masking_rules, dict) else None) if masking_rules else None
-            if isinstance(masks, list) and masks:
-                if not mask_name:
-                    return criteria_defs
-                active_fields: set[str] = set()
-                for m in masks:
-                    if not isinstance(m, dict):
-                        continue
-                    if str(m.get("name") or "").strip() != str(mask_name).strip():
-                        continue
-                    ac = m.get("active_criteria") or []
-                    if isinstance(ac, list):
-                        active_fields = {str(x).strip() for x in ac if str(x).strip()}
-                    break
-                if not active_fields:
-                    return []
-                return [c for c in criteria_defs if isinstance(c, dict) and str(c.get("field") or "").strip() in active_fields]
-
-            # Legacy per-criterion scoping fallback
-            if not mask_name:
-                return criteria_defs
-            out = []
-            for c in criteria_defs:
-                if not isinstance(c, dict):
-                    continue
-                scopes = c.get("applies_to_masks") or c.get("mask_scope")
-                if not scopes:
-                    out.append(c)
-                    continue
-                if isinstance(scopes, str):
-                    scopes_list = [scopes]
-                elif isinstance(scopes, list):
-                    scopes_list = scopes
-                else:
-                    scopes_list = [str(scopes)]
-                scopes_norm = [str(x).strip() for x in scopes_list if str(x).strip()]
-                if mask_name in scopes_norm:
-                    out.append(c)
-            return out
-
-        criteria_defs = _criteria_for_active_mask(all_criteria_defs, active_mask)
+        criteria_defs = filter_criteria_for_mask(all_criteria_defs, active_mask, self.rules)
         criteria_by_field = {c.get('field'): c for c in criteria_defs if isinstance(c, dict) and c.get('field')}
         criteria_results = evaluation.get('criteria_results', {}) or {}
 
@@ -1045,7 +495,8 @@ class IterativeImagination:
         )
         
         # Get AI-driven parameter recommendations (optional, can be enabled per-project)
-        aivis_param_recommendations_enabled = proj_cfg.get("aivis_parameter_recommendations", False)
+        project_cfg = (self.rules.get("project") or {}) if isinstance(self.rules, dict) else {}
+        aivis_param_recommendations_enabled = project_cfg.get("aivis_parameter_recommendations", False)
         if aivis_param_recommendations_enabled:
             try:
                 self.logger.info("Getting AI parameter recommendations from AIVis...")
@@ -1056,6 +507,17 @@ class IterativeImagination:
                         image_path = self.project.project_root / image_path
                     else:
                         image_path = Path(image_path)
+                    
+                    # Get current parameters
+                    params = aigen_config.get("parameters", {})
+                    cur_d = float(params.get("denoise", 0.5))
+                    cur_cfg = float(params.get("cfg", 7.0))
+                    
+                    # Get parameter bounds
+                    denoise_min = float(project_cfg.get("denoise_min", 0.20))
+                    denoise_max = float(project_cfg.get("denoise_max", 0.80))
+                    cfg_min = float(project_cfg.get("cfg_min", 4.0))
+                    cfg_max = float(project_cfg.get("cfg_max", 12.0))
                     
                     # Get original description
                     try:
@@ -1094,9 +556,9 @@ class IterativeImagination:
                     
                     # Apply recommendations with confidence weighting
                     # Only apply if confidence is above threshold (0.5) and it doesn't conflict with caps
-                    confidence_threshold = 0.5
+                    from core.constants import CONFIDENCE_THRESHOLD
                     
-                    if denoise_conf >= confidence_threshold:
+                    if denoise_conf >= CONFIDENCE_THRESHOLD:
                         if denoise_rec == "increase":
                             # Weight the recommendation by confidence (0.5-1.0 maps to 0.5-1.0x of base increment)
                             rec_weight = 0.5 + (denoise_conf * 0.5)  # 0.5 to 1.0
@@ -1113,7 +575,7 @@ class IterativeImagination:
                                 params["denoise"] = new_denoise
                                 self.logger.info(f"  Applied AIVis denoise decrease: {params['denoise']:.3f} (-{rec_delta:.3f})")
                     
-                    if cfg_conf >= confidence_threshold:
+                    if cfg_conf >= CONFIDENCE_THRESHOLD:
                         if cfg_rec == "increase":
                             rec_weight = 0.5 + (cfg_conf * 0.5)
                             rec_delta = 0.5 * rec_weight  # Base increment of 0.5, scaled by confidence
@@ -1129,6 +591,9 @@ class IterativeImagination:
                                 params["cfg"] = new_cfg
                                 self.logger.info(f"  Applied AIVis cfg decrease: {params['cfg']:.1f} (-{rec_delta:.1f})")
                     
+                    # Update aigen_config with modified params
+                    aigen_config["parameters"] = params
+                    
                     # Store recommendations in metadata for debugging
                     if not hasattr(self, '_last_param_recommendations'):
                         self._last_param_recommendations = []
@@ -1141,7 +606,7 @@ class IterativeImagination:
                 # Continue with algorithmic adjustments only
         
         # Check if prompt improvement is enabled (default: false for testing)
-        improve_prompts_enabled = proj_cfg.get("improve_prompts", False)
+        improve_prompts_enabled = project_cfg.get("improve_prompts", False)
         
         if failed_criteria and improve_prompts_enabled:
             changed = self.prompt_service.maybe_improve_prompts(
@@ -1226,65 +691,26 @@ class IterativeImagination:
             self.logger.info(f"Run id: {self.run_id}")
 
         # Detect masks and their associated criteria for sequential mask cycling
-        mask_sequence = []
-        masking_rules = self.rules.get("masking") if isinstance(self.rules, dict) else None
-        masks = (masking_rules.get("masks") if isinstance(masking_rules, dict) else None) if masking_rules else None
-        if isinstance(masks, list):
-            for m in masks:
-                if not isinstance(m, dict):
-                    continue
-                mask_name = str(m.get("name") or "").strip()
-                if mask_name and mask_name != "default":
-                    # Find the criterion field for this mask (e.g., left_outfit for left mask)
-                    active_criteria = m.get("active_criteria") or []
-                    mask_criterion = None
-                    for crit_field in active_criteria:
-                        # Look for outfit criteria (left_outfit, middle_outfit, right_outfit)
-                        if isinstance(crit_field, str) and "_outfit" in crit_field:
-                            mask_criterion = crit_field
-                            break
-                    if mask_criterion:
-                        mask_sequence.append({"name": mask_name, "criterion": mask_criterion})
+        mask_sequence = self.mask_sequencer.detect_mask_sequence()
         
         # If we have a mask sequence, cycle through them sequentially
         if mask_sequence:
-            self.logger.info(f"Multi-mask mode: will cycle through {len(mask_sequence)} mask(s): {[m['name'] for m in mask_sequence]}")
+            self.logger.info(f"Multi-mask mode: will cycle through {len(mask_sequence)} mask(s): {[m.name for m in mask_sequence]}")
             iterations_run = 0
             last_iteration_run: Optional[int] = None
             current_iteration = start_iteration
             mask_index = 0
+            boost_config = self._get_inpainting_boost_values()
             
             while mask_index < len(mask_sequence) and current_iteration <= max_iterations:
                 current_mask = mask_sequence[mask_index]
-                mask_name = current_mask["name"]
-                mask_criterion = current_mask["criterion"]
+                mask_name = current_mask.name
+                mask_criterion = current_mask.criterion
                 
                 self.logger.info(f"{'='*60}\nProcessing mask: {mask_name} (criterion: {mask_criterion})\n{'='*60}")
                 
-                # Set active_mask in working/AIGen.yaml and boost denoise/cfg for inpainting
-                aigen_config = self.project.load_aigen_config()
-                aigen_config.setdefault("masking", {})
-                aigen_config["masking"]["enabled"] = True
-                aigen_config["masking"]["active_mask"] = mask_name
-                
-                # Boost denoise/cfg for inpainting (masks allow higher edit strength)
-                params = aigen_config.get("parameters", {})
-                current_denoise = float(params.get("denoise", 0.5))
-                current_cfg = float(params.get("cfg", 7.0))
-                
-                # Get configurable boost values from rules.yaml
-                boost = self._get_inpainting_boost_values()
-                
-                # If denoise/cfg are at default or low values, boost them for inpainting
-                if current_denoise < boost["denoise_threshold"]:
-                    params["denoise"] = boost["denoise_min"]
-                    self.logger.info(f"Boosted denoise to {params['denoise']} for inpainting (mask: {mask_name}, from rules.yaml)")
-                if current_cfg < boost["cfg_threshold"]:
-                    params["cfg"] = boost["cfg_min"]
-                    self.logger.info(f"Boosted cfg to {params['cfg']} for inpainting (mask: {mask_name}, from rules.yaml)")
-                
-                aigen_config["parameters"] = params
-                self.project.save_aigen_config(aigen_config)
+                # Prepare mask iteration (set active_mask and boost parameters)
+                self.mask_sequencer.prepare_mask_iteration(current_mask, boost_config)
                 
                 mask_passed = False
                 mask_iterations = 0
@@ -1318,14 +744,7 @@ class IterativeImagination:
                         self.logger.info(f"{'='*60}\nMask '{mask_name}' criterion '{mask_criterion}' PASSED! (Iteration {iteration})\n{'='*60}")
                         mask_passed = True
                         # Update progress image for next mask
-                        try:
-                            progress_path = self.project.project_root / "input" / "progress.png"
-                            progress_path.parent.mkdir(parents=True, exist_ok=True)
-                            iteration_paths = self.project.get_iteration_paths(iteration, run_id=self.run_id)
-                            shutil.copy2(iteration_paths['image'], progress_path)
-                            self.logger.info(f"Updated progress image for next mask: {progress_path}")
-                        except Exception:
-                            pass
+                        self.mask_sequencer.update_progress_image(iteration, self.run_id)
                         # Don't apply improvements when mask passes - move to next mask
                         break
                     
